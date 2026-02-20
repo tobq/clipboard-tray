@@ -3,6 +3,7 @@
 import threading
 import time
 import json
+import re
 import ctypes
 import ctypes.wintypes
 import tkinter as tk
@@ -26,7 +27,7 @@ SETTINGS_PATH = os.path.join(SCRIPT_DIR, 'clipboard-settings.json')
 os.makedirs(IMG_DIR, exist_ok=True)
 
 # --- Settings ---
-DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'max_visible': 8}
+DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'max_visible': 8, 'regex_search': False}
 
 def load_settings() -> dict:
     try:
@@ -428,11 +429,28 @@ def _build_popup(x, y):
     clear_btn.bind('<Leave>', lambda e: clear_btn.config(fg=TEXT_DIM))
     clear_btn.bind('<Button-1>', lambda e: _do_clear_all())
 
-    # Search
+    # Search row (entry + regex toggle)
+    search_row = tk.Frame(popup, bg=BG)
+    search_row.pack(fill='x', padx=12, pady=(8, 4))
+
     search_var = tk.StringVar()
-    search = tk.Entry(popup, textvariable=search_var, bg='#0a0a0a', fg=TEXT, insertbackground=TEXT,
+    search = tk.Entry(search_row, textvariable=search_var, bg='#0a0a0a', fg=TEXT, insertbackground=TEXT,
                       relief='flat', font=('Segoe UI', 10), highlightthickness=1, highlightcolor=ACCENT, highlightbackground='#222')
-    search.pack(fill='x', padx=12, pady=(8, 4))
+    search.pack(side='left', fill='x', expand=True)
+
+    regex_on = [settings.get('regex_search', False)]
+    rx_btn = tk.Label(search_row, text=".*", fg=ACCENT if regex_on[0] else TEXT_DIM, bg='#0a0a0a',
+                      font=('Cascadia Code', 10), cursor='hand2', padx=6)
+    rx_btn.pack(side='right')
+
+    def _toggle_regex(e=None):
+        regex_on[0] = not regex_on[0]
+        rx_btn.config(fg=ACCENT if regex_on[0] else TEXT_DIM)
+        settings['regex_search'] = regex_on[0]
+        save_settings_file()
+        apply_filter(search_var.get())
+
+    rx_btn.bind('<Button-1>', _toggle_regex)
     popup.after(100, lambda: search.focus_set())
 
     # Scrollable list (no visible scrollbar - mousewheel only)
@@ -566,6 +584,16 @@ def _build_popup(x, y):
     empty_label = tk.Label(list_frame, text="Copy something to get started",
                           fg=TEXT_DIM, bg=BG, font=('Segoe UI', 10), pady=40)
 
+    def _matches(query, stext):
+        if not query:
+            return True
+        if regex_on[0]:
+            try:
+                return bool(re.search(query, stext, re.IGNORECASE))
+            except re.error:
+                return False
+        return query.lower() in stext
+
     def apply_filter(query=''):
         """Show/hide pre-built widgets instead of destroying and recreating them."""
         for row, sep, _, _ in all_row_data:
@@ -576,7 +604,7 @@ def _build_popup(x, y):
         rows.clear()
         shown = 0
         for row, sep, item, stext in all_row_data:
-            if query and query not in stext:
+            if query and not _matches(query, stext):
                 continue
             if not query and shown >= settings['max_visible']:
                 break
@@ -616,7 +644,7 @@ def _build_popup(x, y):
     popup.bind('<Return>', _on_key)
 
     # Direct search - no debounce, filtering is just pack/pack_forget
-    search_var.trace_add('write', lambda *a: apply_filter(search_var.get().lower()))
+    search_var.trace_add('write', lambda *a: apply_filter(search_var.get()))
     apply_filter()
 
 def _set_row_bg(frame, color):
