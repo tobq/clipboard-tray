@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Clipboard</title>
+<style>
+  :root { --bg: #0c0c0c; --surface: #131313; --text: #ccc; --text-dim: #555; --accent: #a78bfa; --green: #34d399; --red: #f87171; --pin: #f59e0b; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background:var(--surface); color:var(--text); padding:0; overflow-y:auto; }
+
+  .sticky { position:sticky; top:0; z-index:10; background:var(--surface); padding-bottom:4px; }
+  header { display:flex; align-items:center; justify-content:flex-end; padding:10px 16px 0; gap:8px; }
+  .hdr-btn { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:11px; padding:4px 8px; transition:color 0.15s; }
+  .hdr-btn:hover { color:var(--red); }
+  .count { font-size:11px; color:var(--text-dim); flex:1; }
+
+  .search { width:calc(100% - 32px); background:#0a0a0a; border:1px solid #222; border-radius:6px; margin:10px 16px;
+            padding:8px 10px; color:var(--text); font-size:13px; outline:none; font-family:inherit; }
+  .search:focus { border-color:var(--accent); }
+  .search::placeholder { color:var(--text-dim); }
+
+  .item { padding:10px 16px; cursor:pointer; transition:background 0.1s; position:relative; }
+  .item:not(:last-child) { border-bottom:1px solid #1a1a1a; }
+  .item:hover { background:#1a1a1a; }
+  .item.pinned-item { border-left:2px solid var(--pin); }
+
+  .item-row { display:flex; align-items:flex-start; gap:10px; }
+  .preview { flex:1; min-width:0; font-size:12.5px; line-height:1.5; color:var(--text);
+             font-family:'Cascadia Code','Fira Code','Consolas',monospace; }
+  .preview.collapsed { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .preview.expanded { white-space:pre-wrap; word-break:break-word; max-height:300px; overflow-y:auto;
+                      background:var(--bg); border-radius:6px; padding:10px; margin:4px 0; }
+
+  .actions { display:flex; align-items:center; gap:2px; flex-shrink:0; opacity:0; transition:opacity 0.1s; }
+  .item:hover .actions { opacity:1; }
+  .act { background:none; border:none; color:var(--text-dim); cursor:pointer; padding:3px 5px;
+         font-size:12px; border-radius:3px; transition:all 0.1s; line-height:1; }
+  .act:hover { color:var(--accent); background:#ffffff08; }
+  .act.pin-active { color:var(--pin); }
+  .act.del:hover { color:var(--red); }
+
+  .meta { display:flex; gap:8px; margin-top:4px; font-size:10px; color:var(--text-dim); }
+
+  mark { background:rgba(167,139,250,0.2); color:#c4b5fd; border-radius:2px; padding:0 1px; }
+
+  .toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%) translateY(16px);
+           background:var(--green); color:#000; padding:6px 16px; border-radius:16px; font-size:12px;
+           font-weight:500; opacity:0; transition:all 0.2s; pointer-events:none; }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+  .empty { text-align:center; color:var(--text-dim); padding:60px 0; font-size:13px; }
+</style></head><body>
+<div class="sticky">
+  <header>
+    <span class="count" id="count"></span>
+    <button class="hdr-btn" id="deleteAll">Clear</button>
+  </header>
+  <input class="search" id="search" type="text" placeholder="Search..." autocomplete="off" spellcheck="false">
+</div>
+<div class="list" id="list"></div>
+<div class="toast" id="toast">Copied</div>
+<script>
+const list = document.getElementById('list');
+const toast = document.getElementById('toast');
+const searchEl = document.getElementById('search');
+const countEl = document.getElementById('count');
+const MAX_VISIBLE = 8;
+let toastTimer, items = [], expanded = new Set(), query = '';
+
+function ago(ts) {
+  const s = Math.floor((Date.now()/1000) - ts);
+  if (s < 3) return 'now';
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  if (s < 86400) return Math.floor(s/3600) + 'h';
+  return Math.floor(s/86400) + 'd';
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function highlight(text, q) {
+  if (!q) return esc(text);
+  const escaped = esc(text);
+  const qEsc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return escaped.replace(new RegExp('(' + qEsc + ')', 'gi'), '<mark>$1</mark>');
+}
+
+function lines(s) { return s.split(/\r?\n/).length; }
+
+function needsExpand(text) { return text.length > 120 || lines(text) > 1; }
+
+function render() {
+  const filtered = query ? items.filter(it => it.text.toLowerCase().includes(query)) : items;
+  const sorted = [...filtered].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  const visible = query ? sorted : sorted.slice(0, MAX_VISIBLE);
+  countEl.textContent = filtered.length + ' item' + (filtered.length !== 1 ? 's' : '');
+  if (!visible.length) {
+    list.innerHTML = query
+      ? '<div class="empty">No matches</div>'
+      : '<div class="empty">Copy something to get started</div>';
+    return;
+  }
+  list.innerHTML = visible.map(it => {
+    const ri = items.indexOf(it);
+    const exp = expanded.has(ri);
+    const canExp = needsExpand(it.text);
+    const display = exp ? it.text : it.text.replace(/\r?\n/g, ' ');
+    const pin = it.pinned;
+    return `<div class="item${pin ? ' pinned-item' : ''}" data-i="${ri}">
+      <div class="item-row">
+        <div class="preview ${exp ? 'expanded' : 'collapsed'}">${highlight(display, query)}</div>
+        <div class="actions">
+          ${canExp ? `<button class="act expand-btn" data-i="${ri}" title="${exp ? 'Collapse' : 'Expand'}">${exp ? '&#9660;' : '&#9654;'}</button>` : ''}
+          <button class="act${pin ? ' pin-active' : ''}" data-action="pin" data-i="${ri}" title="${pin ? 'Unpin' : 'Pin'}">&#9733;</button>
+          <button class="act del" data-action="del" data-i="${ri}" title="Delete">&#10005;</button>
+        </div>
+      </div>
+      <div class="meta"><span>${ago(it.ts)}</span><span>${it.text.length.toLocaleString()} chars</span>${pin ? '<span style="color:var(--pin)">pinned</span>' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+function showToast() {
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 1500);
+}
+
+const post = (url, body) => fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+
+document.addEventListener('click', async e => {
+  const act = e.target.closest('.act');
+  if (act) {
+    e.stopPropagation();
+    const i = +act.dataset.i;
+    if (act.dataset.action === 'pin') { await post('/api/pin', {index: i}); refresh(); }
+    else if (act.dataset.action === 'del') { await post('/api/delete', {index: i}); refresh(); }
+    else if (act.classList.contains('expand-btn')) { expanded.has(i) ? expanded.delete(i) : expanded.add(i); render(); }
+    return;
+  }
+  const item = e.target.closest('.item');
+  if (!item) return;
+  const i = +item.dataset.i;
+  if (items[i]) {
+    await post('/api/copy', {text: items[i].text});
+    showToast();
+  }
+});
+
+document.getElementById('deleteAll').addEventListener('click', async () => {
+  await post('/api/delete-all', {});
+  refresh();
+});
+
+searchEl.addEventListener('input', e => { query = e.target.value.toLowerCase(); render(); });
+
+async function refresh() {
+  try {
+    const r = await fetch('/api/history');
+    const data = await r.json();
+    if (JSON.stringify(data) !== JSON.stringify(items)) { items = data; render(); }
+  } catch {}
+}
+refresh();
+setInterval(refresh, 1000);
+
+// Track when window was shown to debounce blur
+let shownAt = 0;
+window.addEventListener('focus', () => { shownAt = Date.now(); });
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && window.pywebview) pywebview.api.hide_popup();
+});
+window.addEventListener('blur', () => {
+  if (window.pywebview && Date.now() - shownAt > 500) {
+    setTimeout(() => pywebview.api.hide_popup(), 100);
+  }
+});
+</script></body></html>
