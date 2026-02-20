@@ -27,7 +27,7 @@ SETTINGS_PATH = os.path.join(SCRIPT_DIR, 'clipboard-settings.json')
 os.makedirs(IMG_DIR, exist_ok=True)
 
 # --- Settings ---
-DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'max_visible': 8, 'regex_search': False}
+DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'regex_search': False}
 
 def load_settings() -> dict:
     try:
@@ -497,17 +497,27 @@ def _build_popup(x, y):
             elif ry + rh > vis_bot:
                 canvas.yview_moveto((ry + rh - ch) / total_h)
 
-    # --- Pre-build all item widgets (pack/pack_forget for fast filtering) ---
-    # Items stay in natural (chronological) order - pinned items just survive "Clear All"
-    all_row_data = []  # [(row_frame, sep_frame, item, search_text)]
+    # --- Lazy-loaded item list: build widgets on demand in batches ---
+    BATCH = 30
+    # Pre-compute search text for all items (cheap strings only, no widgets)
+    all_items = [(item, item.get('text', '').lower() if item.get('type') != 'image' else 'image')
+                 for item in items]
+    widget_cache = {}   # idx -> (row_frame, sep_frame)
+    packed = []         # currently packed (row, sep) for fast teardown
+    match_indices = []  # indices into all_items matching current query
+    loaded_count = [0]  # how many of match_indices have been built+packed
 
-    for item in items:
+    def _build_widget(idx):
+        """Build (or return cached) widget for all_items[idx]."""
+        if idx in widget_cache:
+            return widget_cache[idx]
+
+        item = all_items[idx][0]
         real_idx = items.index(item)
         pinned = item.get('pinned', False)
         is_image = item.get('type') == 'image'
 
         row = tk.Frame(list_frame, bg=BG, cursor='hand2')
-
         if pinned:
             tk.Frame(row, bg=PIN_COLOR, width=2).pack(side='left', fill='y')
 
@@ -521,9 +531,9 @@ def _build_popup(x, y):
                 if fname in _thumb_cache:
                     tk_img = _thumb_cache[fname]
                 else:
-                    img = Image.open(img_path)
-                    img.thumbnail((WIN_W - 120, 60))
-                    tk_img = ImageTk.PhotoImage(img)
+                    pil_img = Image.open(img_path)
+                    pil_img.thumbnail((WIN_W - 120, 60))
+                    tk_img = ImageTk.PhotoImage(pil_img)
                     _thumb_cache[fname] = tk_img
                 _tk_images.append(tk_img)
                 preview = tk.Label(content, image=tk_img, bg=BG, anchor='w')
@@ -533,7 +543,6 @@ def _build_popup(x, y):
                                  font=('Segoe UI', 9))
                 preview.pack(fill='x')
             meta_text = f"{ago(item['ts'])}  {item.get('width', '?')}x{item.get('height', '?')}"
-            search_text = 'image'
         else:
             text = item.get('text', '')
             display = text.replace('\r\n', ' ').replace('\n', ' ')
@@ -543,29 +552,24 @@ def _build_popup(x, y):
                              font=('Cascadia Code', 9), wraplength=WIN_W - 80)
             preview.pack(fill='x')
             meta_text = f"{ago(item['ts'])}  {len(text):,} chars"
-            search_text = text.lower()
 
         if pinned:
             meta_text += "  pinned"
         meta = tk.Label(content, text=meta_text, fg=TEXT_DIM, bg=BG, anchor='w', font=('Segoe UI', 8))
         meta.pack(fill='x')
 
-        # Action buttons
         actions = tk.Frame(row, bg=BG)
         actions.pack(side='right', padx=(0, 8))
-
         pin_lbl = tk.Label(actions, text='\u2605', fg=PIN_COLOR if pinned else TEXT_DIM, bg=BG,
                          font=('Segoe UI', 11), cursor='hand2')
         pin_lbl.pack(side='left', padx=2)
         pin_lbl.bind('<Button-1>', lambda e, idx=real_idx: _do_pin(idx))
-
         del_lbl = tk.Label(actions, text='\u2715', fg=TEXT_DIM, bg=BG, font=('Segoe UI', 10), cursor='hand2')
         del_lbl.pack(side='left', padx=2)
         del_lbl.bind('<Enter>', lambda e, l=del_lbl: l.config(fg=RED))
         del_lbl.bind('<Leave>', lambda e, l=del_lbl: l.config(fg=TEXT_DIM))
         del_lbl.bind('<Button-1>', lambda e, idx=real_idx: _do_delete(idx))
 
-        # Hover/click: use dynamic index lookup so filtering doesn't break bindings
         def bind_hover(widget, row_frame, it):
             def on_enter(e):
                 for i, (r, _) in enumerate(rows):
@@ -574,12 +578,12 @@ def _build_popup(x, y):
                         break
             widget.bind('<Enter>', on_enter)
             widget.bind('<Button-1>', lambda e, item=it: paste_to_prev_app(item))
-
         for w in [row, content, preview, meta]:
             bind_hover(w, row, item)
 
         sep = tk.Frame(list_frame, bg='#1a1a1a', height=1)
-        all_row_data.append((row, sep, item, search_text))
+        widget_cache[idx] = (row, sep)
+        return row, sep
 
     empty_label = tk.Label(list_frame, text="Copy something to get started",
                           fg=TEXT_DIM, bg=BG, font=('Segoe UI', 10), pady=40)
@@ -594,24 +598,35 @@ def _build_popup(x, y):
                 return False
         return query.lower() in stext
 
-    def apply_filter(query=''):
-        """Show/hide pre-built widgets instead of destroying and recreating them."""
-        for row, sep, _, _ in all_row_data:
-            row.pack_forget()
-            sep.pack_forget()
-        empty_label.pack_forget()
-
-        rows.clear()
-        shown = 0
-        for row, sep, item, stext in all_row_data:
-            if query and not _matches(query, stext):
-                continue
-            if not query and shown >= settings['max_visible']:
-                break
+    def _load_batch():
+        """Build and pack the next BATCH of matching items."""
+        start = loaded_count[0]
+        end = min(start + BATCH, len(match_indices))
+        for i in range(start, end):
+            idx = match_indices[i]
+            row, sep = _build_widget(idx)
             row.pack(fill='x', pady=0)
             sep.pack(fill='x')
-            rows.append((row, item))
-            shown += 1
+            packed.append((row, sep))
+            rows.append((row, all_items[idx][0]))
+        loaded_count[0] = end
+
+    def apply_filter(query=''):
+        """Recompute matches, tear down visible widgets, load first batch."""
+        for row, sep in packed:
+            row.pack_forget()
+            sep.pack_forget()
+        packed.clear()
+        rows.clear()
+        empty_label.pack_forget()
+
+        match_indices.clear()
+        for i, (item, stext) in enumerate(all_items):
+            if _matches(query, stext):
+                match_indices.append(i)
+
+        loaded_count[0] = 0
+        _load_batch()
 
         if not rows:
             empty_label.config(text="No matches" if query else "Copy something to get started")
@@ -623,9 +638,19 @@ def _build_popup(x, y):
                 _set_row_bg(r, BG)
             _set_row_bg(rows[0][0], BG_SELECTED)
 
+    def _on_scroll(*_args):
+        """Load more items when scrolled near the bottom."""
+        if loaded_count[0] < len(match_indices) and canvas.yview()[1] > 0.85:
+            _load_batch()
+
+    canvas.configure(yscrollcommand=_on_scroll)
+
     # --- Keyboard nav ---
     def _on_key(event):
         if event.keysym == 'Down':
+            # Load more if arrowing past loaded items
+            if sel[0] + 1 >= len(rows) and loaded_count[0] < len(match_indices):
+                _load_batch()
             _update_selection(sel[0] + 1)
             return 'break'
         elif event.keysym == 'Up':
@@ -643,7 +668,7 @@ def _build_popup(x, y):
     popup.bind('<Up>', _on_key)
     popup.bind('<Return>', _on_key)
 
-    # Direct search - no debounce, filtering is just pack/pack_forget
+    # Direct search - filtering is just pack_forget + repack from cache
     search_var.trace_add('write', lambda *a: apply_filter(search_var.get()))
     apply_filter()
 
@@ -691,7 +716,7 @@ def _show_settings():
 
     mx, my = get_mouse_pos()
     left, top, right, bottom = get_monitor_work_area(mx, my)
-    dw, dh = 280, 220
+    dw, dh = 280, 190
     dx = min(max(left, mx - dw // 2), right - dw)
     dy = min(max(top, my - 50), bottom - dh)
     dlg.geometry(f'{dw}x{dh}+{dx}+{dy}')
@@ -718,7 +743,6 @@ def _show_settings():
 
     age_var = make_row(dlg, "Max age (days)", settings['max_age_days'])
     size_var = make_row(dlg, "Max size (GB)", settings['max_size_gb'])
-    vis_var = make_row(dlg, "Visible items", settings['max_visible'])
 
     # Current usage
     size_mb = get_storage_bytes() / (1024 * 1024)
@@ -729,7 +753,6 @@ def _show_settings():
         try:
             settings['max_age_days'] = max(1, int(age_var.get()))
             settings['max_size_gb'] = max(0.1, float(size_var.get()))
-            settings['max_visible'] = max(1, min(50, int(vis_var.get())))
             save_settings_file()
             with lock:
                 prune_history()
