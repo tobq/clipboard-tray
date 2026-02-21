@@ -27,7 +27,19 @@ SETTINGS_PATH = os.path.join(SCRIPT_DIR, 'clipboard-settings.json')
 os.makedirs(IMG_DIR, exist_ok=True)
 
 # --- Settings ---
-DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'regex_search': False}
+_AHK_PRESETS = {
+    '1': "does that all make sense or is there any clarifying questions you have to make for the best output? Maybe even suggestions?\n\nMake sure to look through the code/documentation/etc, and consult back to me before you start - we need to make sure were on the same page first. Think very hard",
+    '2': "does that all make sense or is there any clarifying questions you have to make for the best output? Maybe even suggestions? Think very hard",
+    '3': "Nothing else? Any suggestions? Maybe have a final look over of the stuff we've just done. Do you reckon what we have so far is the best/cleanest way to impl this. if not impl a production ready clean minimal version. Think very hard",
+    '4': "ok that solved that issue, do you reckon what we have so far is the best/cleanest way to impl this. if not impl a production ready clean minimal version. Think very hard",
+    '5': "Think very hard",
+    '6': "Would it help if you added comprehensive test logs temporarily and i retest then give you the results to help you pin point the solution? Think very hard",
+    '7': "I think this is good to go, before you start impl, can you just write down a super technical/detailed plan in markdown format in file. Include key findings from your research, so whoever reading this has context from where to start from, before they move on to the new task at hand. When I say technical, you don't need to write out actual full code implementations, but I mean detail the sorts of tables needing reworking, libraries/methods used, etc... Pseudocode at most unless reference small snippets of code. This conversation can get interrupted/cleared/compacted so we need to be able to impl this from the info in this file. Let me know if that all makes sense or is there any clarifying questions you have to make for the best output? Maybe even suggestions? Think very hard",
+    '8': "here's where we left off before our conversation got condensed:\n===================\n\n===================",
+    '9': "We AGGRESSIVELY should try to minimise code/logic duplication and maximise/unify/reuse shared components across projects.\nOften it's better to adapt existing components, further strengthening them as opposed to creating new variants which will likely lead to duplicated effort down the line.\nWe can still have inheritance/composition - doesn't have to be everything in 1 monster function/class, but the core logic should be shared/reused.\nThis must be taken into account at every step of thinking/planning.\nThis reduces maintenance cost and chance of bugs, and makes it easier to understand and adapt code in future",
+}
+DEFAULT_NUMPAD = {k: {'type': 'text', 'text': v} for k, v in _AHK_PRESETS.items()}
+DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'regex_search': False, 'numpad_slots': DEFAULT_NUMPAD}
 
 def load_settings() -> dict:
     try:
@@ -161,6 +173,115 @@ def copy_image_to_clipboard(img_path):
     ctypes.windll.kernel32.GlobalUnlock(hmem)
     ctypes.windll.user32.SetClipboardData(CF_DIB, hmem)
     ctypes.windll.user32.CloseClipboard()
+
+# --- Clipboard backup/restore (full format, like AHK ClipboardAll) ---
+
+def backup_clipboard():
+    """Backup all clipboard formats. Returns list of (format, bytes)."""
+    formats = []
+    u32 = ctypes.windll.user32
+    k32 = ctypes.windll.kernel32
+    u32.OpenClipboard(None)
+    try:
+        fmt = 0
+        while True:
+            fmt = u32.EnumClipboardFormats(fmt)
+            if fmt == 0:
+                break
+            handle = u32.GetClipboardData(fmt)
+            if handle:
+                size = k32.GlobalSize(handle)
+                ptr = k32.GlobalLock(handle)
+                if ptr and size:
+                    data = ctypes.string_at(ptr, size)
+                    formats.append((fmt, data))
+                    k32.GlobalUnlock(handle)
+    except Exception:
+        pass
+    finally:
+        u32.CloseClipboard()
+    return formats
+
+def restore_clipboard(formats):
+    """Restore clipboard from backup."""
+    u32 = ctypes.windll.user32
+    k32 = ctypes.windll.kernel32
+    u32.OpenClipboard(None)
+    u32.EmptyClipboard()
+    for fmt, data in formats:
+        hmem = k32.GlobalAlloc(0x0042, len(data))
+        ptr = k32.GlobalLock(hmem)
+        ctypes.memmove(ptr, data, len(data))
+        k32.GlobalUnlock(hmem)
+        u32.SetClipboardData(fmt, hmem)
+    u32.CloseClipboard()
+
+# --- Numpad quick-paste ---
+
+# Circled digit chars for badges: ① ② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑨
+NUMPAD_BADGES = {i: chr(0x2460 + i - 1) for i in range(1, 10)}
+
+def get_numpad_slots():
+    return settings.get('numpad_slots', {})
+
+def get_item_numpad(item):
+    """Return numpad slot number (1-9) assigned to this item, or None."""
+    slots = get_numpad_slots()
+    for num, slot in slots.items():
+        if item.get('type') == 'image' and slot.get('type') == 'image':
+            if item.get('image') == slot.get('image'):
+                return int(num)
+        elif item.get('type') != 'image' and slot.get('type') != 'image':
+            if item.get('text') == slot.get('text'):
+                return int(num)
+    return None
+
+def assign_numpad(slot_num, item):
+    """Assign item to numpad slot. Auto-pins the item in history."""
+    slots = get_numpad_slots()
+    if item.get('type') == 'image':
+        slots[str(slot_num)] = {'type': 'image', 'image': item['image']}
+    else:
+        slots[str(slot_num)] = {'type': 'text', 'text': item.get('text', '')}
+    settings['numpad_slots'] = slots
+    save_settings_file()
+    # Auto-pin in history
+    with lock:
+        for h in history:
+            if h.get('type') == item.get('type'):
+                if item.get('type') == 'image' and h.get('image') == item.get('image'):
+                    h['pinned'] = True
+                    break
+                elif item.get('type') != 'image' and h.get('text') == item.get('text'):
+                    h['pinned'] = True
+                    break
+        save_history()
+
+def numpad_paste(slot_num):
+    """Paste numpad slot content with clipboard backup/restore."""
+    slot = get_numpad_slots().get(str(slot_num))
+    if not slot:
+        return False
+    backup = backup_clipboard()
+    if slot.get('type') == 'image':
+        img_path = os.path.join(IMG_DIR, slot['image'])
+        if os.path.exists(img_path):
+            copy_image_to_clipboard(img_path)
+        else:
+            return False
+    else:
+        pyperclip.copy(slot.get('text', ''))
+    time.sleep(0.05)
+    keyboard.send('ctrl+v')
+    time.sleep(0.15)
+    restore_clipboard(backup)
+    return True
+
+# Global: currently selected item in popup (for numpad-assign when popup open)
+_popup_selected_item = [None]
+
+def _popup_visible():
+    return popup and popup.winfo_exists() and popup.state() != 'withdrawn'
 
 # --- Clipboard poller ---
 
@@ -479,6 +600,7 @@ def _build_popup(x, y):
         if 0 <= old < len(rows):
             _set_row_bg(rows[old][0], BG)
         _set_row_bg(rows[new_idx][0], BG_SELECTED)
+        _popup_selected_item[0] = rows[new_idx][1] if rows else None
         # Scroll into view
         row_widget = rows[new_idx][0]
         canvas.update_idletasks()
@@ -516,6 +638,7 @@ def _build_popup(x, y):
         real_idx = items.index(item)
         pinned = item.get('pinned', False)
         is_image = item.get('type') == 'image'
+        assigned_num = get_item_numpad(item)
 
         row = tk.Frame(list_frame, bg=BG, cursor='hand2')
         if pinned:
@@ -558,8 +681,30 @@ def _build_popup(x, y):
         meta = tk.Label(content, text=meta_text, fg=TEXT_DIM, bg=BG, anchor='w', font=('Segoe UI', 8))
         meta.pack(fill='x')
 
+        # Numpad picker (hidden, shown on hover)
+        numpad_bar = tk.Frame(content, bg=BG)
+        slots = get_numpad_slots()
+        for n in range(1, 10):
+            is_this = (assigned_num == n)
+            is_taken = str(n) in slots and not is_this
+            fg = GREEN if is_this else (TEXT_DIM if is_taken else ACCENT)
+            nlbl = tk.Label(numpad_bar, text=str(n), fg=fg, bg='#0a0a0a' if is_this else BG,
+                           font=('Cascadia Code', 8), cursor='hand2', padx=3, pady=1)
+            nlbl.pack(side='left', padx=1)
+            nlbl.bind('<Button-1>', lambda e, sn=n, it=item: (_numpad_assign_ui(sn, it), 'break')[1])
+            nlbl.bind('<Enter>', lambda e, l=nlbl, n=n: l.config(bg='#252525'))
+            nlbl.bind('<Leave>', lambda e, l=nlbl, n=n, t=is_this: l.config(bg='#0a0a0a' if t else BG))
+
+        # Actions column
         actions = tk.Frame(row, bg=BG)
         actions.pack(side='right', padx=(0, 8))
+
+        # Number badge (always visible if assigned)
+        if assigned_num:
+            badge = tk.Label(actions, text=NUMPAD_BADGES[assigned_num], fg=GREEN, bg=BG,
+                           font=('Segoe UI', 10))
+            badge.pack(side='left', padx=2)
+
         pin_lbl = tk.Label(actions, text='\u2605', fg=PIN_COLOR if pinned else TEXT_DIM, bg=BG,
                          font=('Segoe UI', 11), cursor='hand2')
         pin_lbl.pack(side='left', padx=2)
@@ -570,16 +715,43 @@ def _build_popup(x, y):
         del_lbl.bind('<Leave>', lambda e, l=del_lbl: l.config(fg=TEXT_DIM))
         del_lbl.bind('<Button-1>', lambda e, idx=real_idx: _do_delete(idx))
 
+        # Hover: show/hide numpad picker + update selection
+        _hide_timer = [None]
+
+        def _show_numpad():
+            numpad_bar.pack(fill='x', pady=(2, 0))
+
+        def _hide_numpad():
+            numpad_bar.pack_forget()
+
         def bind_hover(widget, row_frame, it):
             def on_enter(e):
+                if _hide_timer[0]:
+                    row.after_cancel(_hide_timer[0])
+                    _hide_timer[0] = None
+                _show_numpad()
                 for i, (r, _) in enumerate(rows):
                     if r is row_frame:
                         _update_selection(i)
                         break
+            def on_leave(e):
+                _hide_timer[0] = row.after(150, _hide_numpad)
             widget.bind('<Enter>', on_enter)
+            widget.bind('<Leave>', on_leave)
             widget.bind('<Button-1>', lambda e, item=it: paste_to_prev_app(item))
-        for w in [row, content, preview, meta]:
+
+        for w in [row, content, preview, meta, numpad_bar]:
             bind_hover(w, row, item)
+        # Keep numpad visible when hovering its number labels
+        def _cancel_hide(e):
+            if _hide_timer[0]:
+                row.after_cancel(_hide_timer[0])
+                _hide_timer[0] = None
+        def _start_hide(e):
+            _hide_timer[0] = row.after(150, _hide_numpad)
+        for child in numpad_bar.winfo_children():
+            child.bind('<Enter>', _cancel_hide, add='+')
+            child.bind('<Leave>', _start_hide, add='+')
 
         sep = tk.Frame(list_frame, bg='#1a1a1a', height=1)
         widget_cache[idx] = (row, sep)
@@ -706,6 +878,61 @@ def _poll_focus():
     if root:
         root.after(300, _poll_focus)
 
+def _numpad_assign_ui(slot_num, item):
+    """Assign item to numpad slot, with confirm if slot is taken."""
+    slots = get_numpad_slots()
+    existing = slots.get(str(slot_num))
+    if existing and existing.get('text', '') != item.get('text', ''):
+        # Slot taken by different content - show confirm
+        preview = existing.get('text', '[image]')[:50]
+        _confirm_reassign(slot_num, item, preview)
+    else:
+        assign_numpad(slot_num, item)
+        show_popup()  # Rebuild to show updated badges
+
+def _confirm_reassign(slot_num, item, old_preview):
+    """Dark confirm popup for reassigning a taken numpad slot."""
+    dlg = tk.Toplevel(root)
+    dlg.overrideredirect(True)
+    dlg.attributes('-topmost', True)
+    dlg.configure(bg=BG)
+
+    mx, my = get_mouse_pos()
+    left, top, right, bottom = get_monitor_work_area(mx, my)
+    dw, dh = 320, 120
+    dx = min(max(left, mx - dw // 2), right - dw)
+    dy = min(max(top, my - 30), bottom - dh)
+    dlg.geometry(f'{dw}x{dh}+{dx}+{dy}')
+    dlg.bind('<Escape>', lambda e: dlg.destroy())
+    dlg.focus_force()
+
+    tk.Label(dlg, text=f"Numpad {slot_num} already assigned to:",
+             fg=TEXT, bg=BG, font=('Segoe UI', 9)).pack(padx=12, pady=(10, 2))
+    tk.Label(dlg, text=f'"{old_preview}..."' if len(old_preview) >= 50 else f'"{old_preview}"',
+             fg=TEXT_DIM, bg=BG, font=('Cascadia Code', 8), wraplength=280).pack(padx=12)
+
+    btn_row = tk.Frame(dlg, bg=BG)
+    btn_row.pack(pady=(10, 0))
+
+    def do_replace():
+        assign_numpad(slot_num, item)
+        dlg.destroy()
+        show_popup()
+
+    rep = tk.Label(btn_row, text="Replace", fg=GREEN, bg='#1a1a1a', font=('Segoe UI', 9),
+                   cursor='hand2', padx=12, pady=3)
+    rep.pack(side='left', padx=4)
+    rep.bind('<Button-1>', lambda e: do_replace())
+    rep.bind('<Enter>', lambda e: rep.config(bg='#252525'))
+    rep.bind('<Leave>', lambda e: rep.config(bg='#1a1a1a'))
+
+    cancel = tk.Label(btn_row, text="Cancel", fg=TEXT_DIM, bg='#1a1a1a', font=('Segoe UI', 9),
+                      cursor='hand2', padx=12, pady=3)
+    cancel.pack(side='left', padx=4)
+    cancel.bind('<Button-1>', lambda e: dlg.destroy())
+    cancel.bind('<Enter>', lambda e: cancel.config(bg='#252525'))
+    cancel.bind('<Leave>', lambda e: cancel.config(bg='#1a1a1a'))
+
 def _show_settings():
     """Settings dialog as a dark themed popup."""
     hide_popup()
@@ -804,6 +1031,8 @@ WM_SYSKEYUP = 0x0105
 VK_LWIN = 0x5B
 VK_RWIN = 0x5C
 VK_V = 0x56
+VK_NUMPAD1 = 0x61
+VK_NUMPAD9 = 0x69
 
 _win_held = False
 _last_popup = 0.0
@@ -842,6 +1071,18 @@ def ll_keyboard_hook(nCode, wParam, lParam):
                     _last_popup = now
                     show_popup()
                 return 1
+            elif VK_NUMPAD1 <= vk <= VK_NUMPAD9:
+                slot_num = vk - VK_NUMPAD1 + 1
+                if _popup_visible():
+                    # Popup open: assign selected item to this numpad slot
+                    item = _popup_selected_item[0]
+                    if item and root:
+                        root.after(0, lambda n=slot_num, it=item: _numpad_assign_ui(n, it))
+                    return 1
+                elif str(slot_num) in get_numpad_slots():
+                    # Popup closed: paste the slot content
+                    threading.Thread(target=numpad_paste, args=(slot_num,), daemon=True).start()
+                    return 1
         elif wParam in (WM_KEYUP, WM_SYSKEYUP):
             if vk in (VK_LWIN, VK_RWIN):
                 _win_held = False
