@@ -1,4 +1,4 @@
 @echo off
 call "%~dp0kill.bat"
-timeout /t 1 /noexec >nul
+ping -n 2 127.0.0.1 >nul
 call "%~dp0start.bat"

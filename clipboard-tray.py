@@ -1,4 +1,4 @@
-"""Clipboard history tray app. Run: pip install pystray pyperclip pillow keyboard && python clipboard-tray.py"""
+"""Clipboard history tray app. Run: pip install pystray pyperclip pillow keyboard pywebview && python clipboard-tray.py"""
 
 import threading
 import time
@@ -6,16 +6,15 @@ import json
 import re
 import ctypes
 import ctypes.wintypes
-import tkinter as tk
 import io
-import struct
 import hashlib
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import os
 import pyperclip
 import pystray
-import keyboard  # only used for simulating ctrl+v paste
-from PIL import Image, ImageDraw, ImageGrab, ImageTk
+import keyboard
+import webview
+from PIL import Image, ImageDraw, ImageGrab
 
 PORT = 9123
 lock = threading.Lock()
@@ -26,22 +25,23 @@ IMG_DIR = os.path.join(SCRIPT_DIR, 'clipboard-images')
 SETTINGS_PATH = os.path.join(SCRIPT_DIR, 'clipboard-settings.json')
 os.makedirs(IMG_DIR, exist_ok=True)
 
-# --- Settings ---
+# --- AHK presets for first-run seeding ---
 _AHK_PRESETS = {
-    '1': "does that all make sense or is there any clarifying questions you have to make for the best output? Maybe even suggestions?\n\nMake sure to look through the code/documentation/etc, and consult back to me before you start - we need to make sure were on the same page first. Think very hard",
-    '2': "does that all make sense or is there any clarifying questions you have to make for the best output? Maybe even suggestions? Think very hard",
-    '3': "Nothing else? Any suggestions? Maybe have a final look over of the stuff we've just done. Do you reckon what we have so far is the best/cleanest way to impl this. if not impl a production ready clean minimal version. Think very hard",
-    '4': "ok that solved that issue, do you reckon what we have so far is the best/cleanest way to impl this. if not impl a production ready clean minimal version. Think very hard",
-    '5': "Think very hard",
-    '6': "Would it help if you added comprehensive test logs temporarily and i retest then give you the results to help you pin point the solution? Think very hard",
-    '7': "I think this is good to go, before you start impl, can you just write down a super technical/detailed plan in markdown format in file. Include key findings from your research, so whoever reading this has context from where to start from, before they move on to the new task at hand. When I say technical, you don't need to write out actual full code implementations, but I mean detail the sorts of tables needing reworking, libraries/methods used, etc... Pseudocode at most unless reference small snippets of code. This conversation can get interrupted/cleared/compacted so we need to be able to impl this from the info in this file. Let me know if that all makes sense or is there any clarifying questions you have to make for the best output? Maybe even suggestions? Think very hard",
-    '8': "here's where we left off before our conversation got condensed:\n===================\n\n===================",
-    '9': "We AGGRESSIVELY should try to minimise code/logic duplication and maximise/unify/reuse shared components across projects.\nOften it's better to adapt existing components, further strengthening them as opposed to creating new variants which will likely lead to duplicated effort down the line.\nWe can still have inheritance/composition - doesn't have to be everything in 1 monster function/class, but the core logic should be shared/reused.\nThis must be taken into account at every step of thinking/planning.\nThis reduces maintenance cost and chance of bugs, and makes it easier to understand and adapt code in future",
+    1: "does that all make sense or is there any clarifying questions you have to make for the best output? Maybe even suggestions?\n\nMake sure to look through the code/documentation/etc, and consult back to me before you start - we need to make sure were on the same page first. Think very hard",
+    2: "does that all make sense or is there any clarifying questions you have to make for the best output? Maybe even suggestions? Think very hard",
+    3: "Nothing else? Any suggestions? Maybe have a final look over of the stuff we've just done. Do you reckon what we have so far is the best/cleanest way to impl this. if not impl a production ready clean minimal version. Think very hard",
+    4: "ok that solved that issue, do you reckon what we have so far is the best/cleanest way to impl this. if not impl a production ready clean minimal version. Think very hard",
+    5: "Think very hard",
+    6: "Would it help if you added comprehensive test logs temporarily and i retest then give you the results to help you pin point the solution? Think very hard",
+    7: "I think this is good to go, before you start impl, can you just write down a super technical/detailed plan in markdown format in file. Include key findings from your research, so whoever reading this has context from where to start from, before they move on to the new task at hand. When I say technical, you don't need to write out actual full code implementations, but I mean detail the sorts of tables needing reworking, libraries/methods used, etc... Pseudocode at most unless reference small snippets of code. This conversation can get interrupted/cleared/compacted so we need to be able to impl this from the info in this file. Let me know if that all makes sense or is there any clarifying questions you have to make for the best output? Maybe even suggestions? Think very hard",
+    8: "here's where we left off before our conversation got condensed:\n===================\n\n===================",
+    9: "We AGGRESSIVELY should try to minimise code/logic duplication and maximise/unify/reuse shared components across projects.\nOften it's better to adapt existing components, further strengthening them as opposed to creating new variants which will likely lead to duplicated effort down the line.\nWe can still have inheritance/composition - doesn't have to be everything in 1 monster function/class, but the core logic should be shared/reused.\nThis must be taken into account at every step of thinking/planning.\nThis reduces maintenance cost and chance of bugs, and makes it easier to understand and adapt code in future",
 }
-DEFAULT_NUMPAD = {k: {'type': 'text', 'text': v} for k, v in _AHK_PRESETS.items()}
-DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'regex_search': False, 'numpad_slots': DEFAULT_NUMPAD}
 
-def load_settings() -> dict:
+# --- Settings (numpad stored on history items via pinned: 1-9, not in settings) ---
+DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'regex_search': False}
+
+def load_settings():
     try:
         with open(SETTINGS_PATH, 'r', encoding='utf-8') as f:
             return {**DEFAULT_SETTINGS, **json.load(f)}
@@ -49,12 +49,14 @@ def load_settings() -> dict:
         return dict(DEFAULT_SETTINGS)
 
 def save_settings_file():
+    # Strip any leftover numpad_slots from settings before saving
+    s = {k: v for k, v in settings.items() if k != 'numpad_slots'}
     with open(SETTINGS_PATH, 'w', encoding='utf-8') as f:
-        json.dump(settings, f, indent=2)
+        json.dump(s, f, indent=2)
 
 settings = load_settings()
 
-def load_history() -> list[dict]:
+def load_history():
     try:
         with open(DB_PATH, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -65,10 +67,9 @@ def save_history():
     with open(DB_PATH, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False)
 
-history: list[dict] = load_history()
+history = load_history()
 
 def get_storage_bytes():
-    """Total storage: history JSON + all images on disk."""
     total = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
     for fname in os.listdir(IMG_DIR):
         fpath = os.path.join(IMG_DIR, fname)
@@ -77,21 +78,16 @@ def get_storage_bytes():
     return total
 
 def prune_history():
-    """Remove items exceeding age or size limits. Pinned items are kept."""
     now = time.time()
     max_age = settings['max_age_days'] * 86400
     max_bytes = settings['max_size_gb'] * 1024 ** 3
     changed = False
-
-    # Age prune (walk backwards so pop doesn't shift indices)
     for i in range(len(history) - 1, -1, -1):
         item = history[i]
         if not item.get('pinned') and (now - item.get('ts', 0)) > max_age:
             _remove_item_image(item)
             history.pop(i)
             changed = True
-
-    # Size prune (remove oldest non-pinned until under limit)
     while get_storage_bytes() > max_bytes:
         idx = next((i for i in range(len(history) - 1, -1, -1) if not history[i].get('pinned')), None)
         if idx is None:
@@ -99,37 +95,89 @@ def prune_history():
         _remove_item_image(history[idx])
         history.pop(idx)
         changed = True
-
     if changed:
         save_history()
 
 def _remove_item_image(item):
-    """Delete an image item's file if no other history entry references it."""
     if item.get('type') != 'image':
         return
     fname = item.get('image', '')
     if sum(1 for h in history if h.get('image') == fname) <= 1:
         fpath = os.path.join(IMG_DIR, fname)
         if os.path.exists(fpath):
-            try:
-                os.remove(fpath)
-            except OSError:
-                pass
+            try: os.remove(fpath)
+            except OSError: pass
 
-# --- Clipboard image helpers ---
+# --- Migration: old numpad_slots -> unified pinned field on history items ---
+def migrate_numpad():
+    old_slots = settings.get('numpad_slots')
+    has_int_pinned = any(isinstance(h.get('pinned'), int) for h in history)
 
+    if old_slots:
+        # Migrate existing slots to history items
+        for num_str, slot in old_slots.items():
+            num = int(num_str)
+            if slot.get('type') == 'image':
+                match = next((h for h in history if h.get('type') == 'image' and h.get('image') == slot.get('image')), None)
+                if match:
+                    match['pinned'] = num
+                else:
+                    history.insert(0, {'type': 'image', 'image': slot['image'], 'ts': time.time(), 'pinned': num})
+            else:
+                text = slot.get('text', '')
+                match = next((h for h in history if h.get('type') != 'image' and h.get('text') == text), None)
+                if match:
+                    match['pinned'] = num
+                else:
+                    history.insert(0, {'type': 'text', 'text': text, 'ts': time.time(), 'pinned': num})
+        settings.pop('numpad_slots', None)
+        save_history()
+        save_settings_file()
+    elif not has_int_pinned and not history:
+        # First run with empty history: seed AHK presets
+        for num in sorted(_AHK_PRESETS.keys(), reverse=True):
+            history.insert(0, {'type': 'text', 'text': _AHK_PRESETS[num], 'ts': time.time(), 'pinned': num})
+        save_history()
+
+# --- Win32 clipboard function declarations (64-bit safe) ---
 CF_DIB = 8
+CF_UNICODETEXT = 13
+
+_u32 = ctypes.windll.user32
+_k32 = ctypes.windll.kernel32
+
+_u32.OpenClipboard.argtypes = [ctypes.wintypes.HWND]
+_u32.OpenClipboard.restype = ctypes.wintypes.BOOL
+_u32.CloseClipboard.argtypes = []
+_u32.CloseClipboard.restype = ctypes.wintypes.BOOL
+_u32.EmptyClipboard.argtypes = []
+_u32.EmptyClipboard.restype = ctypes.wintypes.BOOL
+_u32.EnumClipboardFormats.argtypes = [ctypes.c_uint]
+_u32.EnumClipboardFormats.restype = ctypes.c_uint
+_u32.GetClipboardData.argtypes = [ctypes.c_uint]
+_u32.GetClipboardData.restype = ctypes.c_void_p
+_u32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+_u32.SetClipboardData.restype = ctypes.c_void_p
+_u32.IsClipboardFormatAvailable.argtypes = [ctypes.c_uint]
+_u32.IsClipboardFormatAvailable.restype = ctypes.wintypes.BOOL
+
+_k32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+_k32.GlobalAlloc.restype = ctypes.c_void_p
+_k32.GlobalLock.argtypes = [ctypes.c_void_p]
+_k32.GlobalLock.restype = ctypes.c_void_p
+_k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+_k32.GlobalUnlock.restype = ctypes.wintypes.BOOL
+_k32.GlobalSize.argtypes = [ctypes.c_void_p]
+_k32.GlobalSize.restype = ctypes.c_size_t
 
 def clipboard_has_image():
-    """Check if clipboard has an image (CF_DIB format)."""
-    ctypes.windll.user32.OpenClipboard(None)
+    _u32.OpenClipboard(None)
     try:
-        return bool(ctypes.windll.user32.IsClipboardFormatAvailable(CF_DIB))
+        return bool(_u32.IsClipboardFormatAvailable(CF_DIB))
     finally:
-        ctypes.windll.user32.CloseClipboard()
+        _u32.CloseClipboard()
 
 def grab_clipboard_image():
-    """Grab image from clipboard, return PIL Image or None."""
     try:
         img = ImageGrab.grabclipboard()
         if isinstance(img, Image.Image):
@@ -139,13 +187,11 @@ def grab_clipboard_image():
     return None
 
 def image_hash(img):
-    """Quick hash of image bytes for dedup."""
     buf = io.BytesIO()
     img.save(buf, format='PNG')
     return hashlib.md5(buf.getvalue()).hexdigest()[:12]
 
 def save_clipboard_image(img):
-    """Save image to disk, return filename."""
     h = image_hash(img)
     fname = f"{h}.png"
     fpath = os.path.join(IMG_DIR, fname)
@@ -154,185 +200,154 @@ def save_clipboard_image(img):
     return fname
 
 def copy_image_to_clipboard(img_path):
-    """Put a PNG image back on the clipboard as CF_DIB."""
     img = Image.open(img_path)
     if img.mode != 'RGBA':
         img = img.convert('RGBA')
-    # Convert to BMP DIB format (no file header)
     buf = io.BytesIO()
     img.save(buf, format='BMP')
-    bmp_data = buf.getvalue()
-    # BMP file header is 14 bytes, skip it for DIB
-    dib_data = bmp_data[14:]
-
-    ctypes.windll.user32.OpenClipboard(None)
-    ctypes.windll.user32.EmptyClipboard()
-    hmem = ctypes.windll.kernel32.GlobalAlloc(0x0042, len(dib_data))  # GMEM_MOVEABLE | GMEM_ZEROINIT
-    ptr = ctypes.windll.kernel32.GlobalLock(hmem)
+    dib_data = buf.getvalue()[14:]
+    _u32.OpenClipboard(None)
+    _u32.EmptyClipboard()
+    hmem = _k32.GlobalAlloc(0x0042, len(dib_data))
+    ptr = _k32.GlobalLock(hmem)
     ctypes.memmove(ptr, dib_data, len(dib_data))
-    ctypes.windll.kernel32.GlobalUnlock(hmem)
-    ctypes.windll.user32.SetClipboardData(CF_DIB, hmem)
-    ctypes.windll.user32.CloseClipboard()
+    _k32.GlobalUnlock(hmem)
+    _u32.SetClipboardData(CF_DIB, hmem)
+    _u32.CloseClipboard()
 
 # --- Clipboard backup/restore (full format, like AHK ClipboardAll) ---
-
 def backup_clipboard():
-    """Backup all clipboard formats. Returns list of (format, bytes)."""
     formats = []
-    u32 = ctypes.windll.user32
-    k32 = ctypes.windll.kernel32
-    u32.OpenClipboard(None)
+    if not _u32.OpenClipboard(None):
+        return formats
     try:
         fmt = 0
         while True:
-            fmt = u32.EnumClipboardFormats(fmt)
+            fmt = _u32.EnumClipboardFormats(fmt)
             if fmt == 0:
                 break
-            handle = u32.GetClipboardData(fmt)
-            if handle:
-                size = k32.GlobalSize(handle)
-                ptr = k32.GlobalLock(handle)
-                if ptr and size:
-                    data = ctypes.string_at(ptr, size)
-                    formats.append((fmt, data))
-                    k32.GlobalUnlock(handle)
+            handle = _u32.GetClipboardData(fmt)
+            if not handle:
+                continue
+            size = _k32.GlobalSize(handle)
+            if not size:
+                continue
+            ptr = _k32.GlobalLock(handle)
+            if not ptr:
+                continue
+            try:
+                data = ctypes.string_at(ptr, size)
+                formats.append((fmt, data))
+            finally:
+                _k32.GlobalUnlock(handle)
     except Exception:
         pass
     finally:
-        u32.CloseClipboard()
+        _u32.CloseClipboard()
     return formats
 
 def restore_clipboard(formats):
-    """Restore clipboard from backup."""
-    u32 = ctypes.windll.user32
-    k32 = ctypes.windll.kernel32
-    u32.OpenClipboard(None)
-    u32.EmptyClipboard()
+    if not formats:
+        return
+    if not _u32.OpenClipboard(None):
+        return
+    _u32.EmptyClipboard()
     for fmt, data in formats:
-        hmem = k32.GlobalAlloc(0x0042, len(data))
-        ptr = k32.GlobalLock(hmem)
+        hmem = _k32.GlobalAlloc(0x0042, len(data))
+        if not hmem:
+            continue
+        ptr = _k32.GlobalLock(hmem)
+        if not ptr:
+            continue
         ctypes.memmove(ptr, data, len(data))
-        k32.GlobalUnlock(hmem)
-        u32.SetClipboardData(fmt, hmem)
-    u32.CloseClipboard()
+        _k32.GlobalUnlock(hmem)
+        _u32.SetClipboardData(fmt, hmem)
+    _u32.CloseClipboard()
 
-# --- Numpad quick-paste ---
-
-# Circled digit chars for badges: ① ② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑨
-NUMPAD_BADGES = {i: chr(0x2460 + i - 1) for i in range(1, 10)}
-
-def get_numpad_slots():
-    return settings.get('numpad_slots', {})
-
-def get_item_numpad(item):
-    """Return numpad slot number (1-9) assigned to this item, or None."""
-    slots = get_numpad_slots()
-    for num, slot in slots.items():
-        if item.get('type') == 'image' and slot.get('type') == 'image':
-            if item.get('image') == slot.get('image'):
-                return int(num)
-        elif item.get('type') != 'image' and slot.get('type') != 'image':
-            if item.get('text') == slot.get('text'):
-                return int(num)
-    return None
-
-def assign_numpad(slot_num, item):
-    """Assign item to numpad slot. Auto-pins the item in history."""
-    slots = get_numpad_slots()
-    if item.get('type') == 'image':
-        slots[str(slot_num)] = {'type': 'image', 'image': item['image']}
-    else:
-        slots[str(slot_num)] = {'type': 'text', 'text': item.get('text', '')}
-    settings['numpad_slots'] = slots
-    save_settings_file()
-    # Auto-pin in history
-    with lock:
-        for h in history:
-            if h.get('type') == item.get('type'):
-                if item.get('type') == 'image' and h.get('image') == item.get('image'):
-                    h['pinned'] = True
-                    break
-                elif item.get('type') != 'image' and h.get('text') == item.get('text'):
-                    h['pinned'] = True
-                    break
-        save_history()
+# --- Numpad quick-paste (unified: pinned = true | 1-9 | false) ---
+_poll_gate = threading.Event()
+_poll_gate.set()
 
 def numpad_paste(slot_num):
-    """Paste numpad slot content with clipboard backup/restore."""
-    slot = get_numpad_slots().get(str(slot_num))
-    if not slot:
+    with lock:
+        item = next((h for h in history if h.get('pinned') == slot_num), None)
+    if not item:
         return False
+    # AHK-style clipboard juggling: backup -> set -> Ctrl+V -> sleep -> restore
+    _poll_gate.clear()
     backup = backup_clipboard()
-    if slot.get('type') == 'image':
-        img_path = os.path.join(IMG_DIR, slot['image'])
-        if os.path.exists(img_path):
+    try:
+        if item.get('type') == 'image':
+            img_path = os.path.join(IMG_DIR, item['image'])
+            if not os.path.exists(img_path):
+                return False
             copy_image_to_clipboard(img_path)
         else:
-            return False
-    else:
-        pyperclip.copy(slot.get('text', ''))
-    time.sleep(0.05)
-    keyboard.send('ctrl+v')
-    time.sleep(0.15)
-    restore_clipboard(backup)
+            pyperclip.copy(item.get('text', ''))
+        time.sleep(0.05)
+        keyboard.send('ctrl+v')
+        time.sleep(0.15)
+        restore_clipboard(backup)
+    finally:
+        _poll_gate.set()
     return True
 
-# Global: currently selected item in popup (for numpad-assign when popup open)
-_popup_selected_item = [None]
-
-def _popup_visible():
-    return popup and popup.winfo_exists() and popup.state() != 'withdrawn'
-
 # --- Clipboard poller ---
-
 def poll_clipboard():
     last_text = ""
     last_img_hash = ""
     while True:
+        _poll_gate.wait()
         try:
-            # Check for image first
             if clipboard_has_image():
                 img = grab_clipboard_image()
                 if img:
                     h = image_hash(img)
                     if h != last_img_hash:
                         last_img_hash = h
-                        last_text = ""  # reset text tracking
+                        last_text = ""
                         fname = save_clipboard_image(img)
                         w, ht = img.size
                         with lock:
-                            # Dedup by image filename
                             if not (history and history[0].get('type') == 'image' and history[0].get('image') == fname):
+                                old_pinned = None
                                 for i, item in enumerate(history):
                                     if item.get('type') == 'image' and item.get('image') == fname:
+                                        old_pinned = item.get('pinned')
                                         history.pop(i)
                                         break
-                                history.insert(0, {"type": "image", "image": fname, "ts": time.time(), "width": w, "height": ht})
+                                entry = {"type": "image", "image": fname, "ts": time.time(), "width": w, "height": ht}
+                                if old_pinned:
+                                    entry['pinned'] = old_pinned
+                                history.insert(0, entry)
                                 prune_history()
                                 save_history()
             else:
-                # Check for text
                 current = pyperclip.paste()
                 if current and current != last_text:
                     last_text = current
-                    last_img_hash = ""  # reset image tracking
+                    last_img_hash = ""
                     with lock:
                         if history and history[0].get("text") == current:
                             pass
                         else:
+                            old_pinned = None
                             for i, item in enumerate(history):
                                 if item.get("text") == current:
+                                    old_pinned = item.get('pinned')
                                     history.pop(i)
                                     break
-                            history.insert(0, {"type": "text", "text": current, "ts": time.time()})
+                            entry = {"type": "text", "text": current, "ts": time.time()}
+                            if old_pinned:
+                                entry['pinned'] = old_pinned
+                            history.insert(0, entry)
                             prune_history()
                             save_history()
         except Exception:
             pass
         time.sleep(0.4)
 
-# --- HTTP server (for browser fallback at localhost:9123) ---
-
+# --- HTTP server ---
 def load_html():
     with open(HTML_PATH, 'r', encoding='utf-8') as f:
         return f.read()
@@ -340,11 +355,11 @@ def load_html():
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/history':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
+            self._json(history)
+        elif self.path == '/api/settings':
             with lock:
-                self.wfile.write(json.dumps(history).encode())
+                size_bytes = get_storage_bytes()
+            self._json({**settings, 'storage_bytes': size_bytes, 'item_count': len(history)})
         elif self.path.startswith('/images/'):
             fname = self.path.split('/')[-1]
             fpath = os.path.join(IMG_DIR, fname)
@@ -362,39 +377,114 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/html')
             self.end_headers()
             self.wfile.write(load_html().encode())
+
     def do_POST(self):
         length = int(self.headers.get('Content-Length', 0))
         body = json.loads(self.rfile.read(length)) if length else {}
-        ok = lambda: (self.send_response(200), self.send_header('Content-Type', 'application/json'), self.end_headers(), self.wfile.write(b'{"ok":true}'))
-        if self.path == '/api/copy':
+
+        if self.path == '/api/paste':
+            idx = body.get('index')
+            with lock:
+                if isinstance(idx, int) and 0 <= idx < len(history):
+                    item = history[idx]
+                    if item.get('type') == 'image':
+                        img_path = os.path.join(IMG_DIR, item['image'])
+                        if os.path.exists(img_path):
+                            copy_image_to_clipboard(img_path)
+                    else:
+                        pyperclip.copy(item.get('text', ''))
+            self._ok()
+            threading.Thread(target=_paste_sequence, daemon=True).start()
+
+        elif self.path == '/api/copy':
             pyperclip.copy(body.get('text', ''))
-            ok()
+            self._ok()
+
         elif self.path == '/api/delete':
             idx = body.get('index')
             with lock:
                 if isinstance(idx, int) and 0 <= idx < len(history):
+                    _remove_item_image(history[idx])
                     history.pop(idx)
                     save_history()
-            ok()
+            self._ok()
+
         elif self.path == '/api/delete-all':
             with lock:
+                removed = [item for item in history if not item.get('pinned')]
+                for item in removed:
+                    _remove_item_image(item)
                 history[:] = [item for item in history if item.get('pinned')]
                 save_history()
-            ok()
+            self._ok()
+
         elif self.path == '/api/pin':
             idx = body.get('index')
             with lock:
                 if isinstance(idx, int) and 0 <= idx < len(history):
-                    history[idx]['pinned'] = not history[idx].get('pinned', False)
+                    p = history[idx].get('pinned')
+                    if isinstance(p, int):
+                        history[idx]['pinned'] = True  # keep pinned, just remove numpad number
+                    else:
+                        history[idx]['pinned'] = not p
                     save_history()
-            ok()
+            self._ok()
+
+        elif self.path == '/api/numpad-assign':
+            idx = body.get('index')
+            slot = body.get('slot')
+            with lock:
+                if isinstance(idx, int) and isinstance(slot, int) and 1 <= slot <= 9 and 0 <= idx < len(history):
+                    for h in history:
+                        if h.get('pinned') == slot:
+                            h['pinned'] = True  # keep pinned, remove number
+                    history[idx]['pinned'] = slot
+                    save_history()
+            self._ok()
+
+        elif self.path == '/api/numpad-unassign':
+            slot = body.get('slot')
+            with lock:
+                if isinstance(slot, int) and 1 <= slot <= 9:
+                    for h in history:
+                        if h.get('pinned') == slot:
+                            h['pinned'] = True
+                            save_history()
+                            break
+            self._ok()
+
+        elif self.path == '/api/settings':
+            if 'max_age_days' in body:
+                settings['max_age_days'] = max(1, int(body['max_age_days']))
+            if 'max_size_gb' in body:
+                settings['max_size_gb'] = max(0.1, float(body['max_size_gb']))
+            if 'regex_search' in body:
+                settings['regex_search'] = bool(body['regex_search'])
+            save_settings_file()
+            with lock:
+                prune_history()
+            self._ok()
+
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _json(self, data):
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        with lock:
+            self.wfile.write(json.dumps(data).encode())
+
+    def _ok(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{"ok":true}')
+
     def log_message(self, *a): pass
 
 # --- Tray icon ---
-
 def make_icon():
     img = Image.new('RGB', (64, 64), '#7c7cf0')
     d = ImageDraw.Draw(img)
@@ -405,7 +495,6 @@ def make_icon():
     return img
 
 # --- Win32 helpers ---
-
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
@@ -434,595 +523,60 @@ def get_foreground_window():
 def set_foreground_window(hwnd):
     ctypes.windll.user32.SetForegroundWindow(hwnd)
 
-# --- Tkinter popup ---
-
+# --- pywebview popup ---
 WIN_W, WIN_H = 460, 520
-BG = '#131313'
-BG_HOVER = '#1a1a1a'
-TEXT = '#cccccc'
-TEXT_DIM = '#555555'
-ACCENT = '#a78bfa'
-PIN_COLOR = '#f59e0b'
-RED = '#f87171'
-GREEN = '#34d399'
-
-root = None
-popup = None
+win = None
 prev_hwnd = None
-_tk_images = []  # prevent GC of PhotoImage references
-_thumb_cache = {}  # filename -> PhotoImage, persists across popup rebuilds
+_popup_shown = False
 
-def init_tk():
-    global root
-    root = tk.Tk()
-    root.withdraw()
+class Api:
+    def hide_popup(self):
+        hide_popup()
 
-def ago(ts):
-    s = int(time.time() - ts)
-    if s < 3: return 'now'
-    if s < 60: return f'{s}s'
-    if s < 3600: return f'{s//60}m'
-    if s < 86400: return f'{s//3600}h'
-    return f'{s//86400}d'
+    def paste_and_hide(self, index):
+        threading.Thread(target=_do_paste_index, args=(index,), daemon=True).start()
 
-def paste_to_prev_app(item):
-    """Copy item to clipboard, refocus the previous app, simulate Ctrl+V."""
-    global prev_hwnd
-    if item.get('type') == 'image':
-        img_path = os.path.join(IMG_DIR, item['image'])
-        if os.path.exists(img_path):
-            copy_image_to_clipboard(img_path)
-    else:
-        pyperclip.copy(item.get('text', ''))
+def _do_paste_index(index):
+    with lock:
+        if 0 <= index < len(history):
+            item = history[index]
+            if item.get('type') == 'image':
+                img_path = os.path.join(IMG_DIR, item['image'])
+                if os.path.exists(img_path):
+                    copy_image_to_clipboard(img_path)
+            else:
+                pyperclip.copy(item.get('text', ''))
+    _paste_sequence()
+
+def _paste_sequence():
+    time.sleep(0.05)
     hide_popup()
+    time.sleep(0.08)
     if prev_hwnd:
-        time.sleep(0.05)
         set_foreground_window(prev_hwnd)
-        time.sleep(0.05)
+        time.sleep(0.08)
         keyboard.send('ctrl+v')
 
 def hide_popup():
-    global popup
-    if popup and popup.winfo_exists():
-        popup.withdraw()
+    global _popup_shown
+    _popup_shown = False
+    if win:
+        try: win.hide()
+        except Exception: pass
 
 def show_popup():
-    global popup, prev_hwnd
+    global prev_hwnd, _popup_shown
     prev_hwnd = get_foreground_window()
     mx, my = get_mouse_pos()
     left, top, right, bottom = get_monitor_work_area(mx, my)
     x = min(max(left, mx - WIN_W // 2), right - WIN_W)
-    # Position so mouse cursor lands on the search bar (~50px from top), not mid-list
     y = min(max(top, my - 50), bottom - WIN_H)
-
-    if root is None:
-        return
-
-    root.after(0, lambda: _build_popup(x, y))
-
-BG_SELECTED = '#252525'
-
-def _build_popup(x, y):
-    global popup, _tk_images
-
-    if popup and popup.winfo_exists():
-        popup.destroy()
-
-    _tk_images = []
-
-    popup = tk.Toplevel(root)
-    popup.overrideredirect(True)
-    popup.attributes('-topmost', True)
-    popup.configure(bg=BG)
-    popup.geometry(f'{WIN_W}x{WIN_H}+{x}+{y}')
-
-    popup.bind('<Escape>', lambda e: hide_popup())
-
-    def _on_focus_out(e):
-        w = popup.focus_get()
-        if w is None:
-            root.after(100, hide_popup)
-    popup.bind('<FocusOut>', _on_focus_out)
-
-    popup.focus_force()
-    popup.lift()
-    popup.after(50, lambda: popup.focus_force())
-
-    # Header
-    hdr = tk.Frame(popup, bg=BG)
-    hdr.pack(fill='x', padx=12, pady=(10, 0))
-
-    with lock:
-        items = list(history)
-
-    count_text = f"{len(items)} item{'s' if len(items) != 1 else ''}"
-    tk.Label(hdr, text=count_text, fg=TEXT_DIM, bg=BG, font=('Segoe UI', 9)).pack(side='left')
-
-    gear_btn = tk.Label(hdr, text='\u2699', fg=TEXT_DIM, bg=BG, font=('Segoe UI', 11), cursor='hand2')
-    gear_btn.pack(side='right')
-    gear_btn.bind('<Enter>', lambda e: gear_btn.config(fg=ACCENT))
-    gear_btn.bind('<Leave>', lambda e: gear_btn.config(fg=TEXT_DIM))
-    gear_btn.bind('<Button-1>', lambda e: _show_settings())
-
-    clear_btn = tk.Label(hdr, text="Clear", fg=TEXT_DIM, bg=BG, font=('Segoe UI', 9), cursor='hand2')
-    clear_btn.pack(side='right', padx=(0, 8))
-    clear_btn.bind('<Enter>', lambda e: clear_btn.config(fg=RED))
-    clear_btn.bind('<Leave>', lambda e: clear_btn.config(fg=TEXT_DIM))
-    clear_btn.bind('<Button-1>', lambda e: _do_clear_all())
-
-    # Search row (entry + regex toggle)
-    search_row = tk.Frame(popup, bg=BG)
-    search_row.pack(fill='x', padx=12, pady=(8, 4))
-
-    search_var = tk.StringVar()
-    search = tk.Entry(search_row, textvariable=search_var, bg='#0a0a0a', fg=TEXT, insertbackground=TEXT,
-                      relief='flat', font=('Segoe UI', 10), highlightthickness=1, highlightcolor=ACCENT, highlightbackground='#222')
-    search.pack(side='left', fill='x', expand=True)
-
-    regex_on = [settings.get('regex_search', False)]
-    rx_btn = tk.Label(search_row, text=".*", fg=ACCENT if regex_on[0] else TEXT_DIM, bg='#0a0a0a',
-                      font=('Cascadia Code', 10), cursor='hand2', padx=6)
-    rx_btn.pack(side='right')
-
-    def _toggle_regex(e=None):
-        regex_on[0] = not regex_on[0]
-        rx_btn.config(fg=ACCENT if regex_on[0] else TEXT_DIM)
-        settings['regex_search'] = regex_on[0]
-        save_settings_file()
-        apply_filter(search_var.get())
-
-    rx_btn.bind('<Button-1>', _toggle_regex)
-    popup.after(100, lambda: search.focus_set())
-
-    # Scrollable list (no visible scrollbar - mousewheel only)
-    canvas = tk.Canvas(popup, bg=BG, highlightthickness=0)
-    list_frame = tk.Frame(canvas, bg=BG)
-
-    list_frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
-    canvas.create_window((0, 0), window=list_frame, anchor='nw', width=WIN_W - 14)
-
-    canvas.pack(fill='both', expand=True, padx=12, pady=4)
-
-    def _on_mousewheel(event):
-        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-    canvas.bind_all('<MouseWheel>', _on_mousewheel)
-
-    # --- Selection state ---
-    sel = [0]
-    rows = []  # current visible rows: [(row_frame, item_dict)]
-
-    def _update_selection(new_idx):
-        if not rows:
-            return
-        new_idx = max(0, min(new_idx, len(rows) - 1))
-        old = sel[0]
-        sel[0] = new_idx
-        if 0 <= old < len(rows):
-            _set_row_bg(rows[old][0], BG)
-        _set_row_bg(rows[new_idx][0], BG_SELECTED)
-        _popup_selected_item[0] = rows[new_idx][1] if rows else None
-        # Scroll into view
-        row_widget = rows[new_idx][0]
-        canvas.update_idletasks()
-        ry = row_widget.winfo_y()
-        rh = row_widget.winfo_height()
-        ch = canvas.winfo_height()
-        top_frac = canvas.yview()[0]
-        bot_frac = canvas.yview()[1]
-        bbox = canvas.bbox('all')
-        if bbox:
-            total_h = bbox[3] - bbox[1]
-            vis_top = top_frac * total_h
-            vis_bot = bot_frac * total_h
-            if ry < vis_top:
-                canvas.yview_moveto(ry / total_h)
-            elif ry + rh > vis_bot:
-                canvas.yview_moveto((ry + rh - ch) / total_h)
-
-    # --- Lazy-loaded item list: build widgets on demand in batches ---
-    BATCH = 30
-    # Pre-compute search text for all items (cheap strings only, no widgets)
-    all_items = [(item, item.get('text', '').lower() if item.get('type') != 'image' else 'image')
-                 for item in items]
-    widget_cache = {}   # idx -> (row_frame, sep_frame)
-    packed = []         # currently packed (row, sep) for fast teardown
-    match_indices = []  # indices into all_items matching current query
-    loaded_count = [0]  # how many of match_indices have been built+packed
-
-    def _build_widget(idx):
-        """Build (or return cached) widget for all_items[idx]."""
-        if idx in widget_cache:
-            return widget_cache[idx]
-
-        item = all_items[idx][0]
-        real_idx = items.index(item)
-        pinned = item.get('pinned', False)
-        is_image = item.get('type') == 'image'
-        assigned_num = get_item_numpad(item)
-
-        row = tk.Frame(list_frame, bg=BG, cursor='hand2')
-        if pinned:
-            tk.Frame(row, bg=PIN_COLOR, width=2).pack(side='left', fill='y')
-
-        content = tk.Frame(row, bg=BG)
-        content.pack(fill='x', expand=True, padx=(8, 4), pady=6)
-
-        if is_image:
-            fname = item.get('image', '')
-            img_path = os.path.join(IMG_DIR, fname)
-            try:
-                if fname in _thumb_cache:
-                    tk_img = _thumb_cache[fname]
-                else:
-                    pil_img = Image.open(img_path)
-                    pil_img.thumbnail((WIN_W - 120, 60))
-                    tk_img = ImageTk.PhotoImage(pil_img)
-                    _thumb_cache[fname] = tk_img
-                _tk_images.append(tk_img)
-                preview = tk.Label(content, image=tk_img, bg=BG, anchor='w')
-                preview.pack(fill='x')
-            except Exception:
-                preview = tk.Label(content, text="[image not found]", fg=TEXT_DIM, bg=BG, anchor='w',
-                                 font=('Segoe UI', 9))
-                preview.pack(fill='x')
-            meta_text = f"{ago(item['ts'])}  {item.get('width', '?')}x{item.get('height', '?')}"
-        else:
-            text = item.get('text', '')
-            display = text.replace('\r\n', ' ').replace('\n', ' ')
-            if len(display) > 80:
-                display = display[:77] + '...'
-            preview = tk.Label(content, text=display, fg=TEXT, bg=BG, anchor='w',
-                             font=('Cascadia Code', 9), wraplength=WIN_W - 80)
-            preview.pack(fill='x')
-            meta_text = f"{ago(item['ts'])}  {len(text):,} chars"
-
-        if pinned:
-            meta_text += "  pinned"
-        meta = tk.Label(content, text=meta_text, fg=TEXT_DIM, bg=BG, anchor='w', font=('Segoe UI', 8))
-        meta.pack(fill='x')
-
-        # Numpad picker (hidden, shown on hover)
-        numpad_bar = tk.Frame(content, bg=BG)
-        slots = get_numpad_slots()
-        for n in range(1, 10):
-            is_this = (assigned_num == n)
-            is_taken = str(n) in slots and not is_this
-            fg = GREEN if is_this else (TEXT_DIM if is_taken else ACCENT)
-            nlbl = tk.Label(numpad_bar, text=str(n), fg=fg, bg='#0a0a0a' if is_this else BG,
-                           font=('Cascadia Code', 8), cursor='hand2', padx=3, pady=1)
-            nlbl.pack(side='left', padx=1)
-            nlbl.bind('<Button-1>', lambda e, sn=n, it=item: (_numpad_assign_ui(sn, it), 'break')[1])
-            nlbl.bind('<Enter>', lambda e, l=nlbl, n=n: l.config(bg='#252525'))
-            nlbl.bind('<Leave>', lambda e, l=nlbl, n=n, t=is_this: l.config(bg='#0a0a0a' if t else BG))
-
-        # Actions column
-        actions = tk.Frame(row, bg=BG)
-        actions.pack(side='right', padx=(0, 8))
-
-        # Number badge (always visible if assigned)
-        if assigned_num:
-            badge = tk.Label(actions, text=NUMPAD_BADGES[assigned_num], fg=GREEN, bg=BG,
-                           font=('Segoe UI', 10))
-            badge.pack(side='left', padx=2)
-
-        pin_lbl = tk.Label(actions, text='\u2605', fg=PIN_COLOR if pinned else TEXT_DIM, bg=BG,
-                         font=('Segoe UI', 11), cursor='hand2')
-        pin_lbl.pack(side='left', padx=2)
-        pin_lbl.bind('<Button-1>', lambda e, idx=real_idx: _do_pin(idx))
-        del_lbl = tk.Label(actions, text='\u2715', fg=TEXT_DIM, bg=BG, font=('Segoe UI', 10), cursor='hand2')
-        del_lbl.pack(side='left', padx=2)
-        del_lbl.bind('<Enter>', lambda e, l=del_lbl: l.config(fg=RED))
-        del_lbl.bind('<Leave>', lambda e, l=del_lbl: l.config(fg=TEXT_DIM))
-        del_lbl.bind('<Button-1>', lambda e, idx=real_idx: _do_delete(idx))
-
-        # Hover: show/hide numpad picker + update selection
-        _hide_timer = [None]
-
-        def _show_numpad():
-            numpad_bar.pack(fill='x', pady=(2, 0))
-
-        def _hide_numpad():
-            numpad_bar.pack_forget()
-
-        def bind_hover(widget, row_frame, it):
-            def on_enter(e):
-                if _hide_timer[0]:
-                    row.after_cancel(_hide_timer[0])
-                    _hide_timer[0] = None
-                _show_numpad()
-                for i, (r, _) in enumerate(rows):
-                    if r is row_frame:
-                        _update_selection(i)
-                        break
-            def on_leave(e):
-                _hide_timer[0] = row.after(150, _hide_numpad)
-            widget.bind('<Enter>', on_enter)
-            widget.bind('<Leave>', on_leave)
-            widget.bind('<Button-1>', lambda e, item=it: paste_to_prev_app(item))
-
-        for w in [row, content, preview, meta, numpad_bar]:
-            bind_hover(w, row, item)
-        # Keep numpad visible when hovering its number labels
-        def _cancel_hide(e):
-            if _hide_timer[0]:
-                row.after_cancel(_hide_timer[0])
-                _hide_timer[0] = None
-        def _start_hide(e):
-            _hide_timer[0] = row.after(150, _hide_numpad)
-        for child in numpad_bar.winfo_children():
-            child.bind('<Enter>', _cancel_hide, add='+')
-            child.bind('<Leave>', _start_hide, add='+')
-
-        sep = tk.Frame(list_frame, bg='#1a1a1a', height=1)
-        widget_cache[idx] = (row, sep)
-        return row, sep
-
-    empty_label = tk.Label(list_frame, text="Copy something to get started",
-                          fg=TEXT_DIM, bg=BG, font=('Segoe UI', 10), pady=40)
-
-    def _matches(query, stext):
-        if not query:
-            return True
-        if regex_on[0]:
-            try:
-                return bool(re.search(query, stext, re.IGNORECASE))
-            except re.error:
-                return False
-        return query.lower() in stext
-
-    def _load_batch():
-        """Build and pack the next BATCH of matching items."""
-        start = loaded_count[0]
-        end = min(start + BATCH, len(match_indices))
-        for i in range(start, end):
-            idx = match_indices[i]
-            row, sep = _build_widget(idx)
-            row.pack(fill='x', pady=0)
-            sep.pack(fill='x')
-            packed.append((row, sep))
-            rows.append((row, all_items[idx][0]))
-        loaded_count[0] = end
-
-    def apply_filter(query=''):
-        """Recompute matches, tear down visible widgets, load first batch."""
-        for row, sep in packed:
-            row.pack_forget()
-            sep.pack_forget()
-        packed.clear()
-        rows.clear()
-        empty_label.pack_forget()
-
-        match_indices.clear()
-        for i, (item, stext) in enumerate(all_items):
-            if _matches(query, stext):
-                match_indices.append(i)
-
-        loaded_count[0] = 0
-        _load_batch()
-
-        if not rows:
-            empty_label.config(text="No matches" if query else "Copy something to get started")
-            empty_label.pack()
-
-        sel[0] = 0
-        if rows:
-            for r, _ in rows:
-                _set_row_bg(r, BG)
-            _set_row_bg(rows[0][0], BG_SELECTED)
-
-    def _on_scroll(*_args):
-        """Load more items when scrolled near the bottom."""
-        if loaded_count[0] < len(match_indices) and canvas.yview()[1] > 0.85:
-            _load_batch()
-
-    canvas.configure(yscrollcommand=_on_scroll)
-
-    # --- Keyboard nav ---
-    def _on_key(event):
-        if event.keysym == 'Down':
-            # Load more if arrowing past loaded items
-            if sel[0] + 1 >= len(rows) and loaded_count[0] < len(match_indices):
-                _load_batch()
-            _update_selection(sel[0] + 1)
-            return 'break'
-        elif event.keysym == 'Up':
-            _update_selection(sel[0] - 1)
-            return 'break'
-        elif event.keysym == 'Return':
-            if rows and 0 <= sel[0] < len(rows):
-                paste_to_prev_app(rows[sel[0]][1])
-            return 'break'
-
-    search.bind('<Down>', _on_key)
-    search.bind('<Up>', _on_key)
-    search.bind('<Return>', _on_key)
-    popup.bind('<Down>', _on_key)
-    popup.bind('<Up>', _on_key)
-    popup.bind('<Return>', _on_key)
-
-    # Direct search - filtering is just pack_forget + repack from cache
-    search_var.trace_add('write', lambda *a: apply_filter(search_var.get()))
-    apply_filter()
-
-def _set_row_bg(frame, color):
-    frame.config(bg=color)
-    for child in frame.winfo_children():
-        try:
-            child.config(bg=color)
-            for sub in child.winfo_children():
-                try: sub.config(bg=color)
-                except: pass
-        except:
-            pass
-
-def _maybe_hide():
-    if popup and popup.winfo_exists() and popup.state() != 'withdrawn':
-        try:
-            if not popup.focus_get():
-                hide_popup()
-        except:
-            hide_popup()
-
-def _poll_focus():
-    """Periodic check: if popup is visible but lost focus, hide it."""
-    if popup and popup.winfo_exists() and popup.state() != 'withdrawn':
-        try:
-            fg = get_foreground_window()
-            # Get the popup's HWND
-            popup_hwnd = int(popup.frame(), 16) if popup.frame() else 0
-            # If foreground is neither our popup nor a child, dismiss
-            if popup.focus_get() is None:
-                hide_popup()
-        except:
-            pass
-    if root:
-        root.after(300, _poll_focus)
-
-def _numpad_assign_ui(slot_num, item):
-    """Assign item to numpad slot, with confirm if slot is taken."""
-    slots = get_numpad_slots()
-    existing = slots.get(str(slot_num))
-    if existing and existing.get('text', '') != item.get('text', ''):
-        # Slot taken by different content - show confirm
-        preview = existing.get('text', '[image]')[:50]
-        _confirm_reassign(slot_num, item, preview)
-    else:
-        assign_numpad(slot_num, item)
-        show_popup()  # Rebuild to show updated badges
-
-def _confirm_reassign(slot_num, item, old_preview):
-    """Dark confirm popup for reassigning a taken numpad slot."""
-    dlg = tk.Toplevel(root)
-    dlg.overrideredirect(True)
-    dlg.attributes('-topmost', True)
-    dlg.configure(bg=BG)
-
-    mx, my = get_mouse_pos()
-    left, top, right, bottom = get_monitor_work_area(mx, my)
-    dw, dh = 320, 120
-    dx = min(max(left, mx - dw // 2), right - dw)
-    dy = min(max(top, my - 30), bottom - dh)
-    dlg.geometry(f'{dw}x{dh}+{dx}+{dy}')
-    dlg.bind('<Escape>', lambda e: dlg.destroy())
-    dlg.focus_force()
-
-    tk.Label(dlg, text=f"Numpad {slot_num} already assigned to:",
-             fg=TEXT, bg=BG, font=('Segoe UI', 9)).pack(padx=12, pady=(10, 2))
-    tk.Label(dlg, text=f'"{old_preview}..."' if len(old_preview) >= 50 else f'"{old_preview}"',
-             fg=TEXT_DIM, bg=BG, font=('Cascadia Code', 8), wraplength=280).pack(padx=12)
-
-    btn_row = tk.Frame(dlg, bg=BG)
-    btn_row.pack(pady=(10, 0))
-
-    def do_replace():
-        assign_numpad(slot_num, item)
-        dlg.destroy()
-        show_popup()
-
-    rep = tk.Label(btn_row, text="Replace", fg=GREEN, bg='#1a1a1a', font=('Segoe UI', 9),
-                   cursor='hand2', padx=12, pady=3)
-    rep.pack(side='left', padx=4)
-    rep.bind('<Button-1>', lambda e: do_replace())
-    rep.bind('<Enter>', lambda e: rep.config(bg='#252525'))
-    rep.bind('<Leave>', lambda e: rep.config(bg='#1a1a1a'))
-
-    cancel = tk.Label(btn_row, text="Cancel", fg=TEXT_DIM, bg='#1a1a1a', font=('Segoe UI', 9),
-                      cursor='hand2', padx=12, pady=3)
-    cancel.pack(side='left', padx=4)
-    cancel.bind('<Button-1>', lambda e: dlg.destroy())
-    cancel.bind('<Enter>', lambda e: cancel.config(bg='#252525'))
-    cancel.bind('<Leave>', lambda e: cancel.config(bg='#1a1a1a'))
-
-def _show_settings():
-    """Settings dialog as a dark themed popup."""
-    hide_popup()
-    dlg = tk.Toplevel(root)
-    dlg.overrideredirect(True)
-    dlg.attributes('-topmost', True)
-    dlg.configure(bg=BG)
-
-    mx, my = get_mouse_pos()
-    left, top, right, bottom = get_monitor_work_area(mx, my)
-    dw, dh = 280, 190
-    dx = min(max(left, mx - dw // 2), right - dw)
-    dy = min(max(top, my - 50), bottom - dh)
-    dlg.geometry(f'{dw}x{dh}+{dx}+{dy}')
-
-    dlg.bind('<Escape>', lambda e: dlg.destroy())
-    dlg.focus_force()
-    dlg.after(50, lambda: dlg.focus_force())
-
-    def _on_focus_out(e):
-        if dlg.focus_get() is None:
-            root.after(100, dlg.destroy)
-    dlg.bind('<FocusOut>', _on_focus_out)
-
-    tk.Label(dlg, text="Settings", fg=TEXT, bg=BG, font=('Segoe UI', 11, 'bold')).pack(padx=12, pady=(12, 8))
-
-    def make_row(parent, label, default):
-        f = tk.Frame(parent, bg=BG)
-        f.pack(fill='x', padx=12, pady=4)
-        tk.Label(f, text=label, fg=TEXT, bg=BG, font=('Segoe UI', 9)).pack(side='left')
-        var = tk.StringVar(value=str(default))
-        tk.Entry(f, textvariable=var, bg='#0a0a0a', fg=TEXT, insertbackground=TEXT, relief='flat',
-                 font=('Segoe UI', 10), width=8, highlightthickness=1, highlightbackground='#222').pack(side='right')
-        return var
-
-    age_var = make_row(dlg, "Max age (days)", settings['max_age_days'])
-    size_var = make_row(dlg, "Max size (GB)", settings['max_size_gb'])
-
-    # Current usage
-    size_mb = get_storage_bytes() / (1024 * 1024)
-    tk.Label(dlg, text=f"Current: {len(history)} items, {size_mb:.1f} MB",
-             fg=TEXT_DIM, bg=BG, font=('Segoe UI', 8)).pack(pady=(4, 0))
-
-    def save_and_close():
-        try:
-            settings['max_age_days'] = max(1, int(age_var.get()))
-            settings['max_size_gb'] = max(0.1, float(size_var.get()))
-            save_settings_file()
-            with lock:
-                prune_history()
-        except ValueError:
-            pass
-        dlg.destroy()
-
-    save_btn = tk.Label(dlg, text="Save", fg=GREEN, bg='#1a1a1a', font=('Segoe UI', 10),
-                        cursor='hand2', padx=16, pady=4)
-    save_btn.pack(pady=(8, 0))
-    save_btn.bind('<Button-1>', lambda e: save_and_close())
-    save_btn.bind('<Enter>', lambda e: save_btn.config(bg='#252525'))
-    save_btn.bind('<Leave>', lambda e: save_btn.config(bg='#1a1a1a'))
-
-def _do_clear_all():
-    with lock:
-        history[:] = [item for item in history if item.get('pinned')]
-        save_history()
-    show_popup()
-
-def _do_pin(idx):
-    with lock:
-        if 0 <= idx < len(history):
-            history[idx]['pinned'] = not history[idx].get('pinned', False)
-            save_history()
-    show_popup()
-
-def _do_delete(idx):
-    with lock:
-        if 0 <= idx < len(history):
-            history.pop(idx)
-            save_history()
-    show_popup()
-
-def open_ui(icon, item):
-    show_popup()
-
-def quit_app(icon, item):
-    icon.stop()
-    os._exit(0)
+    if win:
+        win.move(x, y)
+        win.show()
+        _popup_shown = True
 
 # --- Low-level keyboard hook ---
-
 WH_KEYBOARD_LL = 13
 WM_KEYDOWN = 0x0100
 WM_SYSKEYDOWN = 0x0104
@@ -1039,10 +593,8 @@ _last_popup = 0.0
 DEBOUNCE_MS = 500
 
 user32 = ctypes.windll.user32
-
 LRESULT = ctypes.c_longlong
 HOOKPROC = ctypes.CFUNCTYPE(LRESULT, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM)
-
 user32.SetWindowsHookExW.restype = ctypes.wintypes.HHOOK
 user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, ctypes.wintypes.HINSTANCE, ctypes.wintypes.DWORD]
 user32.CallNextHookEx.restype = LRESULT
@@ -1061,7 +613,6 @@ def ll_keyboard_hook(nCode, wParam, lParam):
     if nCode >= 0:
         kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
         vk = kb.vkCode
-
         if wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
             if vk in (VK_LWIN, VK_RWIN):
                 _win_held = True
@@ -1069,24 +620,23 @@ def ll_keyboard_hook(nCode, wParam, lParam):
                 now = time.time() * 1000
                 if now - _last_popup > DEBOUNCE_MS:
                     _last_popup = now
-                    show_popup()
+                    threading.Thread(target=show_popup, daemon=True).start()
                 return 1
             elif VK_NUMPAD1 <= vk <= VK_NUMPAD9:
                 slot_num = vk - VK_NUMPAD1 + 1
-                if _popup_visible():
-                    # Popup open: assign selected item to this numpad slot
-                    item = _popup_selected_item[0]
-                    if item and root:
-                        root.after(0, lambda n=slot_num, it=item: _numpad_assign_ui(n, it))
+                if _popup_shown:
+                    try: win.evaluate_js(f'assignNumpad({slot_num})')
+                    except Exception: pass
                     return 1
-                elif str(slot_num) in get_numpad_slots():
-                    # Popup closed: paste the slot content
-                    threading.Thread(target=numpad_paste, args=(slot_num,), daemon=True).start()
-                    return 1
+                else:
+                    with lock:
+                        has_slot = any(h.get('pinned') == slot_num for h in history)
+                    if has_slot:
+                        threading.Thread(target=numpad_paste, args=(slot_num,), daemon=True).start()
+                        return 1
         elif wParam in (WM_KEYUP, WM_SYSKEYUP):
             if vk in (VK_LWIN, VK_RWIN):
                 _win_held = False
-
     return user32.CallNextHookEx(_hook_handle, nCode, wParam, lParam)
 
 def hotkey_listener():
@@ -1100,22 +650,23 @@ def hotkey_listener():
         user32.TranslateMessage(ctypes.byref(msg))
         user32.DispatchMessageW(ctypes.byref(msg))
 
+def open_ui(icon, item):
+    threading.Thread(target=show_popup, daemon=True).start()
+
+def quit_app(icon, item):
+    icon.stop()
+    os._exit(0)
+
 if __name__ == '__main__':
-    # HTTP server for browser fallback
+    migrate_numpad()
+
     server = HTTPServer(('127.0.0.1', PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-
-    # Clipboard poller
     threading.Thread(target=poll_clipboard, daemon=True).start()
-
-    # Win+V hotkey via low-level hook
     threading.Thread(target=hotkey_listener, daemon=True).start()
 
-    # System tray
     icon = pystray.Icon(
-        "clipboard",
-        make_icon(),
-        "Clipboard History",
+        "clipboard", make_icon(), "Clipboard History",
         menu=pystray.Menu(
             pystray.MenuItem("Open", open_ui, default=True),
             pystray.MenuItem("Quit", quit_app),
@@ -1124,7 +675,13 @@ if __name__ == '__main__':
     threading.Thread(target=icon.run, daemon=True).start()
 
     print(f"Tray running, Win+V to open popup, web UI also at http://localhost:{PORT}")
+    time.sleep(0.5)
 
-    init_tk()
-    root.after(300, _poll_focus)
-    root.mainloop()
+    api = Api()
+    win = webview.create_window(
+        'Clipboard', f'http://127.0.0.1:{PORT}',
+        width=WIN_W, height=WIN_H,
+        frameless=True, on_top=True, hidden=True,
+        js_api=api,
+    )
+    webview.start()

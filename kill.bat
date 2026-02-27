@@ -1,3 +1,3 @@
 @echo off
-for /f "tokens=2" %%a in ('wmic process where "commandline like '%%clipboard-tray.py%%'" get processid /format:list 2^>nul ^| find "="') do taskkill /F /PID %%a
+taskkill /F /FI "IMAGENAME eq pythonw.exe" >nul 2>&1
 echo Clipboard tray stopped.
