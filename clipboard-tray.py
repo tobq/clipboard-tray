@@ -3,7 +3,6 @@
 import threading
 import time
 import json
-import re
 import ctypes
 import ctypes.wintypes
 import io
@@ -39,7 +38,7 @@ _AHK_PRESETS = {
 }
 
 # --- Settings (numpad stored on history items via pinned: 1-9, not in settings) ---
-DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'regex_search': False}
+DEFAULT_SETTINGS = {'max_age_days': 7, 'max_size_gb': 10, 'regex_search': False, 'groups': []}
 
 def load_settings():
     try:
@@ -69,6 +68,11 @@ def save_history():
 
 history = load_history()
 
+def has_numpad_slot(item, n):
+    """Check if item is assigned to numpad slot n. Distinguishes True (starred) from int (slot)."""
+    p = item.get('pinned')
+    return isinstance(p, int) and not isinstance(p, bool) and p == n
+
 def get_storage_bytes():
     total = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
     for fname in os.listdir(IMG_DIR):
@@ -81,22 +85,17 @@ def prune_history():
     now = time.time()
     max_age = settings['max_age_days'] * 86400
     max_bytes = settings['max_size_gb'] * 1024 ** 3
-    changed = False
     for i in range(len(history) - 1, -1, -1):
         item = history[i]
         if not item.get('pinned') and (now - item.get('ts', 0)) > max_age:
             _remove_item_image(item)
             history.pop(i)
-            changed = True
     while get_storage_bytes() > max_bytes:
         idx = next((i for i in range(len(history) - 1, -1, -1) if not history[i].get('pinned')), None)
         if idx is None:
             break
         _remove_item_image(history[idx])
         history.pop(idx)
-        changed = True
-    if changed:
-        save_history()
 
 def _remove_item_image(item):
     if item.get('type') != 'image':
@@ -141,7 +140,6 @@ def migrate_numpad():
 
 # --- Win32 clipboard function declarations (64-bit safe) ---
 CF_DIB = 8
-CF_UNICODETEXT = 13
 
 _u32 = ctypes.windll.user32
 _k32 = ctypes.windll.kernel32
@@ -171,7 +169,8 @@ _k32.GlobalSize.argtypes = [ctypes.c_void_p]
 _k32.GlobalSize.restype = ctypes.c_size_t
 
 def clipboard_has_image():
-    _u32.OpenClipboard(None)
+    if not _u32.OpenClipboard(None):
+        return False
     try:
         return bool(_u32.IsClipboardFormatAvailable(CF_DIB))
     finally:
@@ -206,13 +205,15 @@ def copy_image_to_clipboard(img_path):
     buf = io.BytesIO()
     img.save(buf, format='BMP')
     dib_data = buf.getvalue()[14:]
-    _u32.OpenClipboard(None)
+    if not _u32.OpenClipboard(None):
+        return
     _u32.EmptyClipboard()
     hmem = _k32.GlobalAlloc(0x0042, len(dib_data))
-    ptr = _k32.GlobalLock(hmem)
-    ctypes.memmove(ptr, dib_data, len(dib_data))
-    _k32.GlobalUnlock(hmem)
-    _u32.SetClipboardData(CF_DIB, hmem)
+    if hmem:
+        ptr = _k32.GlobalLock(hmem)
+        ctypes.memmove(ptr, dib_data, len(dib_data))
+        _k32.GlobalUnlock(hmem)
+        _u32.SetClipboardData(CF_DIB, hmem)
     _u32.CloseClipboard()
 
 # --- Clipboard backup/restore (full format, like AHK ClipboardAll) ---
@@ -270,7 +271,7 @@ _poll_gate.set()
 
 def numpad_paste(slot_num):
     with lock:
-        item = next((h for h in history if h.get('pinned') == slot_num), None)
+        item = next((h for h in history if has_numpad_slot(h, slot_num)), None)
     if not item:
         return False
     # AHK-style clipboard juggling: backup -> set -> Ctrl+V -> sleep -> restore
@@ -311,14 +312,18 @@ def poll_clipboard():
                         with lock:
                             if not (history and history[0].get('type') == 'image' and history[0].get('image') == fname):
                                 old_pinned = None
+                                old_group = None
                                 for i, item in enumerate(history):
                                     if item.get('type') == 'image' and item.get('image') == fname:
                                         old_pinned = item.get('pinned')
+                                        old_group = item.get('group')
                                         history.pop(i)
                                         break
                                 entry = {"type": "image", "image": fname, "ts": time.time(), "width": w, "height": ht}
                                 if old_pinned:
                                     entry['pinned'] = old_pinned
+                                if old_group:
+                                    entry['group'] = old_group
                                 history.insert(0, entry)
                                 prune_history()
                                 save_history()
@@ -332,14 +337,18 @@ def poll_clipboard():
                             pass
                         else:
                             old_pinned = None
+                            old_group = None
                             for i, item in enumerate(history):
                                 if item.get("text") == current:
                                     old_pinned = item.get('pinned')
+                                    old_group = item.get('group')
                                     history.pop(i)
                                     break
                             entry = {"type": "text", "text": current, "ts": time.time()}
                             if old_pinned:
                                 entry['pinned'] = old_pinned
+                            if old_group:
+                                entry['group'] = old_group
                             history.insert(0, entry)
                             prune_history()
                             save_history()
@@ -423,7 +432,7 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 if isinstance(idx, int) and 0 <= idx < len(history):
                     p = history[idx].get('pinned')
-                    if isinstance(p, int):
+                    if isinstance(p, int) and not isinstance(p, bool):
                         history[idx]['pinned'] = True  # keep pinned, just remove numpad number
                     else:
                         history[idx]['pinned'] = not p
@@ -436,7 +445,7 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 if isinstance(idx, int) and isinstance(slot, int) and 1 <= slot <= 9 and 0 <= idx < len(history):
                     for h in history:
-                        if h.get('pinned') == slot:
+                        if has_numpad_slot(h, slot):
                             h['pinned'] = True  # keep pinned, remove number
                     history[idx]['pinned'] = slot
                     save_history()
@@ -447,7 +456,7 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 if isinstance(slot, int) and 1 <= slot <= 9:
                     for h in history:
-                        if h.get('pinned') == slot:
+                        if has_numpad_slot(h, slot):
                             h['pinned'] = True
                             save_history()
                             break
@@ -463,6 +472,44 @@ class Handler(BaseHTTPRequestHandler):
             save_settings_file()
             with lock:
                 prune_history()
+                save_history()
+            self._ok()
+
+        elif self.path == '/api/group-create':
+            name = body.get('name', '').strip()
+            with lock:
+                groups = settings.setdefault('groups', [])
+                if name and name not in groups:
+                    groups.append(name)
+                    save_settings_file()
+            self._ok()
+
+        elif self.path == '/api/group-delete':
+            name = body.get('name', '')
+            with lock:
+                groups = settings.get('groups', [])
+                if name in groups:
+                    groups.remove(name)
+                    for h in history:
+                        if h.get('group') == name:
+                            h.pop('group', None)
+                    save_settings_file()
+                    save_history()
+            self._ok()
+
+        elif self.path == '/api/group-assign':
+            idx = body.get('index')
+            group = body.get('group', '')
+            with lock:
+                if isinstance(idx, int) and 0 <= idx < len(history) and group:
+                    item = history[idx]
+                    if item.get('group') == group:
+                        item.pop('group', None)
+                    else:
+                        item['group'] = group
+                        if not item.get('pinned'):
+                            item['pinned'] = True
+                    save_history()
             self._ok()
 
         else:
@@ -539,13 +586,15 @@ class Api:
 def _do_paste_index(index):
     with lock:
         if 0 <= index < len(history):
-            item = history[index]
-            if item.get('type') == 'image':
-                img_path = os.path.join(IMG_DIR, item['image'])
-                if os.path.exists(img_path):
-                    copy_image_to_clipboard(img_path)
-            else:
-                pyperclip.copy(item.get('text', ''))
+            item = history[index].copy()
+        else:
+            return
+    if item.get('type') == 'image':
+        img_path = os.path.join(IMG_DIR, item['image'])
+        if os.path.exists(img_path):
+            copy_image_to_clipboard(img_path)
+    else:
+        pyperclip.copy(item.get('text', ''))
     _paste_sequence()
 
 def _paste_sequence():
@@ -592,13 +641,12 @@ _win_held = False
 _last_popup = 0.0
 DEBOUNCE_MS = 500
 
-user32 = ctypes.windll.user32
 LRESULT = ctypes.c_longlong
 HOOKPROC = ctypes.CFUNCTYPE(LRESULT, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM)
-user32.SetWindowsHookExW.restype = ctypes.wintypes.HHOOK
-user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, ctypes.wintypes.HINSTANCE, ctypes.wintypes.DWORD]
-user32.CallNextHookEx.restype = LRESULT
-user32.CallNextHookEx.argtypes = [ctypes.wintypes.HHOOK, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM]
+_u32.SetWindowsHookExW.restype = ctypes.wintypes.HHOOK
+_u32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, ctypes.wintypes.HINSTANCE, ctypes.wintypes.DWORD]
+_u32.CallNextHookEx.restype = LRESULT
+_u32.CallNextHookEx.argtypes = [ctypes.wintypes.HHOOK, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM]
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [("vkCode", ctypes.wintypes.DWORD), ("scanCode", ctypes.wintypes.DWORD),
@@ -630,25 +678,25 @@ def ll_keyboard_hook(nCode, wParam, lParam):
                     return 1
                 else:
                     with lock:
-                        has_slot = any(h.get('pinned') == slot_num for h in history)
+                        has_slot = any(has_numpad_slot(h, slot_num) for h in history)
                     if has_slot:
                         threading.Thread(target=numpad_paste, args=(slot_num,), daemon=True).start()
                         return 1
         elif wParam in (WM_KEYUP, WM_SYSKEYUP):
             if vk in (VK_LWIN, VK_RWIN):
                 _win_held = False
-    return user32.CallNextHookEx(_hook_handle, nCode, wParam, lParam)
+    return _u32.CallNextHookEx(_hook_handle, nCode, wParam, lParam)
 
 def hotkey_listener():
     global _hook_handle
-    _hook_handle = user32.SetWindowsHookExW(WH_KEYBOARD_LL, ll_keyboard_hook, None, 0)
+    _hook_handle = _u32.SetWindowsHookExW(WH_KEYBOARD_LL, ll_keyboard_hook, None, 0)
     if not _hook_handle:
         print("Warning: Could not install keyboard hook")
         return
     msg = ctypes.wintypes.MSG()
-    while user32.GetMessageW(ctypes.byref(msg), None, 0, 0):
-        user32.TranslateMessage(ctypes.byref(msg))
-        user32.DispatchMessageW(ctypes.byref(msg))
+    while _u32.GetMessageW(ctypes.byref(msg), None, 0, 0):
+        _u32.TranslateMessage(ctypes.byref(msg))
+        _u32.DispatchMessageW(ctypes.byref(msg))
 
 def open_ui(icon, item):
     threading.Thread(target=show_popup, daemon=True).start()
