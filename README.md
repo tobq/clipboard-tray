@@ -20,20 +20,16 @@ Windows clipboard history manager that replaces the built-in Win+V. Runs as a sy
 ## Install
 
 ```
-pip install pystray pyperclip pillow keyboard pywebview
+install.bat
 ```
+
+Installs Python dependencies and creates a Windows startup shortcut so it launches on boot.
 
 ## Usage
 
 ```
-start.bat        # Kill existing instances + start in background
-kill.bat          # Stop all instances
-```
-
-Or run directly:
-
-```
-pythonw clipboard-tray.py
+start.bat          # Kill existing instances + start in background
+kill.bat           # Stop all instances
 ```
 
 ### Keyboard Shortcuts
