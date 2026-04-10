@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Clipboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
 <style>
+  .mi { font-family:'Material Symbols Rounded'; font-size:16px; font-weight:normal; font-style:normal; line-height:1; letter-spacing:normal;
+        text-transform:none; display:inline-block; white-space:nowrap; word-wrap:normal; direction:ltr; -webkit-font-smoothing:antialiased; }
+  .mi.filled { font-variation-settings: 'FILL' 1; }
   :root { --bg: #0c0c0c; --surface: #131313; --surface2: #1a1a1a; --text: #ccc; --text-dim: #555;
           --accent: #a78bfa; --green: #34d399; --red: #f87171; --pin: #f59e0b; }
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -11,17 +15,22 @@
   .sticky { flex-shrink:0; background:var(--surface); padding-bottom:4px; z-index:10; position:relative; }
   header { display:flex; align-items:center; padding:10px 14px 0; gap:6px; }
   .count { font-size:11px; color:var(--text-dim); flex:1; }
-  .hdr-btn { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:11px; padding:4px 8px; transition:color .15s; }
+  .hdr-btn { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:11px; padding:4px 8px; transition:color .15s; display:flex; align-items:center; }
   .hdr-btn:hover { color:var(--red); }
   .hdr-btn.gear { font-size:14px; }
   .hdr-btn.gear:hover { color:var(--accent); }
-  .search-row { display:flex; align-items:center; margin:8px 14px 4px; }
-  .search { flex:1; background:#0a0a0a; border:1px solid #222; border-radius:6px 0 0 6px; padding:7px 10px; color:var(--text); font-size:13px; outline:none; font-family:inherit; border-right:none; }
-  .search:focus { border-color:var(--accent); }
-  .search:focus + .rx-btn { border-color:var(--accent); }
+  .search-row { display:flex; align-items:stretch; margin:8px 14px 4px; background:#0a0a0a; border:1px solid #222; border-radius:4px; transition:border-color .15s; }
+  .search-row:focus-within { border-color:var(--accent); }
+  .search { flex:1; background:transparent; border:none; padding:7px 4px 7px 10px; color:var(--text); font-size:13px; outline:none; font-family:inherit; min-width:0; }
   .search::placeholder { color:var(--text-dim); }
-  .rx-btn { background:#0a0a0a; border:1px solid #222; border-radius:0 6px 6px 0; padding:7px 8px; color:var(--text-dim); cursor:pointer; font-family:'Cascadia Code',monospace; font-size:12px; transition:all .15s; }
+  .search-btns { display:flex; align-items:center; gap:1px; padding-right:4px; }
+  .search-clear { display:none; background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:2px 4px; line-height:1; border-radius:3px; }
+  .search-clear:hover { color:var(--text); background:#ffffff10; }
+  .search-clear.show { display:block; }
+  .rx-btn { background:none; border:none; border-radius:3px; padding:2px 5px; color:var(--text-dim); cursor:pointer; font-family:'Cascadia Code',monospace; font-size:12px; transition:all .15s; }
+  .rx-btn:hover { color:var(--text); background:#ffffff10; }
   .rx-btn.active { color:var(--accent); background:#1a1030; }
+  .rx-btn.active:hover { background:#251545; }
 
   /* Group filter tags */
   .group-filters { display:flex; gap:4px; padding:2px 14px 2px; flex-wrap:wrap; }
@@ -44,6 +53,7 @@
   .item-row { display:flex; align-items:flex-start; gap:8px; }
   .pin-area { position:relative; flex-shrink:0; display:flex; align-items:center; gap:2px; padding-top:2px; }
   .star { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:14px; padding:2px; transition:color .15s; line-height:1; }
+  .star .mi { font-size:18px; }
   .star.active { color:var(--pin); }
   .star:hover { color:var(--pin); }
   .numpad-badge { color:var(--green); font-size:11px; font-weight:600; min-width:14px; text-align:center; }
@@ -78,7 +88,9 @@
   .actions { display:flex; align-items:center; gap:1px; flex-shrink:0; opacity:0; transition:opacity .1s; }
   .item:hover .actions { opacity:1; }
   .act { background:none; border:none; color:var(--text-dim); cursor:pointer; padding:3px 4px; font-size:11px; border-radius:3px; transition:all .1s; line-height:1; }
-  .act:hover { color:var(--red); background:#ffffff08; }
+  .act .mi { font-size:16px; }
+  .act:hover { color:var(--accent); background:#ffffff08; }
+  .act.act-del:hover { color:var(--red); }
 
   mark { background:rgba(167,139,250,.2); color:#c4b5fd; border-radius:2px; padding:0 1px; }
   .toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%) translateY(16px); background:var(--green); color:#000;
@@ -120,17 +132,22 @@
   .np-slot .np-text.empty { font-style:italic; }
   .np-slot.has-content { cursor:pointer; }
   .np-slot.has-content:hover { background:var(--surface2); }
-  .np-slot .np-remove { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:11px; padding:2px 6px; border-radius:3px; }
-  .np-slot .np-remove:hover { color:var(--red); background:#ffffff08; }
+  .np-slot .np-remove { background:none; border:none; color:var(--text-dim); cursor:pointer; padding:2px 4px; border-radius:3px; }
+  .np-slot .np-remove .mi { font-size:14px; }
+  .np-slot .np-remove:hover { color:var(--text); background:#ffffff08; }
   .settings-usage { font-size:11px; color:var(--text-dim); margin-top:12px; }
   .settings-footer { position:sticky; bottom:0; padding:12px 0 8px; background:rgba(19,19,19,.7); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
-  .settings-save { border:none; background:var(--green); color:#000; padding:8px 24px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; width:100%; }
+  .settings-footer-btns { display:flex; gap:8px; }
+  .settings-save { border:none; background:var(--green); color:#000; padding:8px 24px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; flex:1; }
   .settings-save:hover { filter:brightness(1.1); }
+  .settings-clear { border:none; background:var(--red); color:#000; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; }
+  .settings-clear:hover { filter:brightness(1.1); }
   .group-slot { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid #111; }
   .group-slot .gp-name { flex:1; font-size:12px; color:var(--accent); }
   .group-slot .gp-count { font-size:10px; color:var(--text-dim); }
-  .group-slot .gp-del { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:11px; padding:2px 6px; border-radius:3px; }
-  .group-slot .gp-del:hover { color:var(--red); background:#ffffff08; }
+  .group-slot .gp-del { background:none; border:none; color:var(--text-dim); cursor:pointer; padding:2px 4px; border-radius:3px; }
+  .group-slot .gp-del .mi { font-size:14px; }
+  .group-slot .gp-del:hover { color:var(--text); background:#ffffff08; }
   .add-group-btn { background:none; border:1px dashed #333; border-radius:4px; color:var(--text-dim); cursor:pointer; font-size:11px;
                    padding:6px; width:100%; margin-top:4px; transition:all .15s; }
   .add-group-btn:hover { border-color:var(--accent); color:var(--accent); }
@@ -140,12 +157,14 @@
   <div class="sticky">
     <header>
       <span class="count" id="count"></span>
-      <button class="hdr-btn gear" id="settingsBtn" title="Settings">&#9881;</button>
-      <button class="hdr-btn" id="deleteAll">Clear</button>
+      <button class="hdr-btn gear" id="settingsBtn" title="Settings"><span class="mi filled">settings</span></button>
     </header>
     <div class="search-row">
       <input class="search" id="search" type="text" placeholder="Search..." autocomplete="off" spellcheck="false">
-      <button class="rx-btn" id="regexBtn" title="Regex search">.*</button>
+      <div class="search-btns">
+        <button class="search-clear" id="searchClear" title="Clear search"><span class="mi">close</span></button>
+        <button class="rx-btn" id="regexBtn" title="Regex search">.*</button>
+      </div>
     </div>
     <div class="group-filters" id="groupFilters"></div>
   </div>
@@ -154,7 +173,7 @@
 
 <div class="settings-view" id="settingsView">
   <div class="settings-hdr">
-    <button class="back" id="settingsBack">&larr; Back</button>
+    <button class="back" id="settingsBack"><span class="mi">arrow_back</span> Back</button>
     <h2>Settings</h2>
   </div>
   <div class="settings-body">
@@ -168,10 +187,13 @@
     <div class="settings-section">
       <h3>Groups</h3>
       <div id="groupSlots"></div>
-      <button class="add-group-btn" id="addGroupBtn">+ New Group</button>
+      <button class="add-group-btn" id="addGroupBtn"><span class="mi" style="font-size:14px;vertical-align:middle">add</span> New Group</button>
     </div>
     <div class="settings-footer">
-      <button class="settings-save" id="settingsSave">Save</button>
+      <div class="settings-footer-btns">
+        <button class="settings-save" id="settingsSave">Save</button>
+        <button class="settings-clear" id="clearAll">Clear All</button>
+      </div>
     </div>
   </div>
 </div>
@@ -199,7 +221,7 @@ const regexBtn = document.getElementById('regexBtn');
 let toastTimer, items = [], expanded = new Set(), query = '', regexOn = false, selectedIdx = -1;
 const BATCH = 30;
 let rendered = 0, filtered = [];
-let groups = [], groupFilter = '';
+let groups = [], activeFilters = new Set();
 
 // --- Helpers ---
 function ago(ts) {
@@ -234,36 +256,33 @@ function numpadMap() {
 }
 
 // --- Group filter tags ---
-const BUILTIN_FILTERS = [
-  {key: '__pinned__', label: 'Pinned'},
-  {key: '__numbered__', label: 'Numbered'},
-  {key: '__grouped__', label: 'Grouped'},
-];
-
 function renderGroupFilters() {
   const el = document.getElementById('groupFilters');
   const hasPinned = items.some(it => it.pinned);
   const hasNumbered = items.some(it => numpadOf(it));
-  const hasGrouped = items.some(it => it.group);
+  const hasImages = items.some(it => it.type === 'image');
   let html = '';
   // Built-in filters (only show if relevant items exist)
-  if (hasPinned) html += `<span class="filter-tag builtin${groupFilter === '__pinned__' ? ' active' : ''}" data-filter="__pinned__">Pinned</span>`;
-  if (hasNumbered) html += `<span class="filter-tag builtin${groupFilter === '__numbered__' ? ' active' : ''}" data-filter="__numbered__">Numbered</span>`;
-  if (hasGrouped) html += `<span class="filter-tag builtin${groupFilter === '__grouped__' ? ' active' : ''}" data-filter="__grouped__">Grouped</span>`;
+  if (hasPinned) html += `<span class="filter-tag builtin${activeFilters.has('__pinned__') ? ' active' : ''}" data-filter="__pinned__">Pinned</span>`;
+  if (hasNumbered) html += `<span class="filter-tag builtin${activeFilters.has('__numbered__') ? ' active' : ''}" data-filter="__numbered__">Numbered</span>`;
+  if (hasImages) html += `<span class="filter-tag builtin${activeFilters.has('__images__') ? ' active' : ''}" data-filter="__images__">Images</span>`;
   // Group-specific filters
   html += groups.map(g =>
-    `<span class="filter-tag${groupFilter === g ? ' active' : ''}" data-group="${esc(g)}">${esc(g)}<span class="gtag-x" data-action="delete-group" data-group="${esc(g)}">&times;</span></span>`
+    `<span class="filter-tag${activeFilters.has(g) ? ' active' : ''}" data-group="${esc(g)}">${esc(g)}<span class="gtag-x mi" data-action="delete-group" data-group="${esc(g)}">close</span></span>`
   ).join('');
   el.innerHTML = html;
 }
 
 // --- Rendering ---
 function matchesFilter(it) {
-  if (!groupFilter) return true;
-  if (groupFilter === '__pinned__') return !!it.pinned;
-  if (groupFilter === '__numbered__') return numpadOf(it) !== null;
-  if (groupFilter === '__grouped__') return !!it.group;
-  return it.group === groupFilter;
+  if (!activeFilters.size) return true;
+  for (const f of activeFilters) {
+    if (f === '__pinned__' && !it.pinned) return false;
+    else if (f === '__numbered__' && numpadOf(it) === null) return false;
+    else if (f === '__images__' && it.type !== 'image') return false;
+    else if (!f.startsWith('__') && it.group !== f) return false;
+  }
+  return true;
 }
 
 function applyFilter() {
@@ -278,7 +297,7 @@ function applyFilter() {
   listEl.innerHTML = '';
   selectedIdx = -1;
   loadBatch();
-  if (!filtered.length) listEl.innerHTML = `<div class="empty">${q || groupFilter ? 'No matches' : 'Copy something to get started'}</div>`;
+  if (!filtered.length) listEl.innerHTML = `<div class="empty">${q || activeFilters.size ? 'No matches' : 'Copy something to get started'}</div>`;
 }
 
 function loadBatch() {
@@ -301,7 +320,6 @@ function buildItem(it, ri, nmap) {
   const el = document.createElement('div');
   el.className = 'item' + (pinned ? ' has-pin' : '');
   el.dataset.i = ri;
-  el.dataset.fi = '';
 
   let previewHtml;
   let metaHtml;
@@ -312,12 +330,8 @@ function buildItem(it, ri, nmap) {
     const text = it.text || '';
     const exp = expanded.has(ri);
     const display = exp ? text : text.replace(/\r?\n/g, ' ');
-    const canExp = text.length > 120 || (text.match(/\n/g)||[]).length > 0;
     previewHtml = highlight(display, query);
     metaHtml = `<span>${ago(it.ts)}</span><span>${text.length.toLocaleString()} chars</span>`;
-    if (canExp) {
-      metaHtml += `<span class="expand-toggle" style="color:var(--accent);cursor:pointer">${exp?'collapse':'expand'}</span>`;
-    }
   }
   if (pinned) metaHtml += `<span style="color:var(--pin)">pinned</span>`;
   if (it.group) metaHtml += `<span style="color:var(--accent)">${esc(it.group)}</span>`;
@@ -341,11 +355,11 @@ function buildItem(it, ri, nmap) {
     const cls = itemGroup === g ? 'assigned' : 'available';
     gpBtns += `<span class="gp-btn ${cls}" data-group="${esc(g)}">${esc(g)}</span>`;
   });
-  gpBtns += `<span class="gp-btn add-group" data-action="add-group" title="New group">+</span>`;
+  gpBtns += `<span class="gp-btn add-group" data-action="add-group" title="New group"><span class="mi" style="font-size:14px">add</span></span>`;
 
   el.innerHTML = `<div class="item-row">
     <div class="pin-area">
-      <button class="star${pinned?' active':''}" data-action="pin" data-i="${ri}" title="${pinned?'Unpin':'Pin'}">&#9733;</button>
+      <button class="star${pinned?' active':''}" data-action="pin" data-i="${ri}" title="${pinned?'Unpin':'Pin'}"><span class="mi${pinned?' filled':''}">star</span></button>
       ${np ? `<span class="numpad-badge">${BADGES[np]}</span>` : ''}
       <div class="numpad-picker">
         <div class="np-row">${npBtns}</div>
@@ -356,7 +370,7 @@ function buildItem(it, ri, nmap) {
       <div class="preview ${expanded.has(ri)?'expanded':'collapsed'}">${previewHtml}</div>
       <div class="meta">${metaHtml}</div>
     </div>
-    <div class="actions"><button class="act" data-action="del" data-i="${ri}" title="Delete">&#10005;</button></div>
+    <div class="actions">${!isImage && ((it.text||'').length > 120 || /\n/.test(it.text||'')) ? `<button class="act" data-action="expand" data-i="${ri}" title="${expanded.has(ri)?'Collapse':'Expand'}"><span class="mi">${expanded.has(ri)?'unfold_less':'unfold_more'}</span></button>` : ''}${isImage ? `<button class="act" data-action="save-img" data-i="${ri}" title="Copy to Downloads"><span class="mi">save</span></button>` : `<button class="act" data-action="edit" data-i="${ri}" title="Open in editor"><span class="mi">open_in_new</span></button>`}<button class="act act-del" data-action="del" data-i="${ri}" title="Delete"><span class="mi">close</span></button></div>
   </div>`;
   return el;
 }
@@ -391,7 +405,13 @@ document.addEventListener('click', e => {
   const ftag = e.target.closest('.filter-tag[data-filter]');
   if (ftag) {
     const f = ftag.dataset.filter;
-    groupFilter = groupFilter === f ? '' : f;
+    if (activeFilters.has(f)) { activeFilters.delete(f); }
+    else {
+      // Pinned/Numbered are mutually exclusive
+      if (f === '__pinned__') activeFilters.delete('__numbered__');
+      else if (f === '__numbered__') activeFilters.delete('__pinned__');
+      activeFilters.add(f);
+    }
     renderGroupFilters();
     applyFilter();
     updateCount();
@@ -401,7 +421,8 @@ document.addEventListener('click', e => {
   const gtag = e.target.closest('.filter-tag[data-group]');
   if (gtag && !e.target.closest('[data-action="delete-group"]')) {
     const g = gtag.dataset.group;
-    groupFilter = groupFilter === g ? '' : g;
+    if (activeFilters.has(g)) activeFilters.delete(g);
+    else activeFilters.add(g);
     renderGroupFilters();
     applyFilter();
     updateCount();
@@ -438,12 +459,18 @@ document.addEventListener('click', e => {
   // Star/pin
   const star = e.target.closest('[data-action="pin"]');
   if (star) { e.stopPropagation(); post('/api/pin', {index:+star.dataset.i}).then(refresh); return; }
+  // Save image to Downloads
+  const saveImg = e.target.closest('[data-action="save-img"]');
+  if (saveImg) { e.stopPropagation(); post('/api/copy-image-path', {index:+saveImg.dataset.i}).then(r=>r.json()).then(d=>{ if(d.path) showToast('Path copied'); }); return; }
+  // Edit in editor
+  const edit = e.target.closest('[data-action="edit"]');
+  if (edit) { e.stopPropagation(); post('/api/open-editor', {index:+edit.dataset.i}); return; }
+  // Expand
+  const exp = e.target.closest('[data-action="expand"]');
+  if (exp) { e.stopPropagation(); const ri=+exp.dataset.i; expanded.has(ri)?expanded.delete(ri):expanded.add(ri); applyFilter(); return; }
   // Delete
   const del = e.target.closest('[data-action="del"]');
   if (del) { e.stopPropagation(); post('/api/delete', {index:+del.dataset.i}).then(refresh); return; }
-  // Expand toggle
-  const exp = e.target.closest('.expand-toggle');
-  if (exp) { e.stopPropagation(); const item = exp.closest('.item'); if(item){ const ri=+item.dataset.i; expanded.has(ri)?expanded.delete(ri):expanded.add(ri); applyFilter(); } return; }
   // Click item to paste
   const item = e.target.closest('.item');
   if (item) {
@@ -472,9 +499,13 @@ function tryAssignNumpad(slot, itemIdx) {
 }
 document.getElementById('confirmYes').addEventListener('click', async () => {
   if (pendingAssign) {
-    if (pendingAssign.deleteGroup) {
+    if (pendingAssign.clearAll) {
+      await post('/api/delete-all', {});
+      await refresh();
+      openSettings();
+    } else if (pendingAssign.deleteGroup) {
       const g = pendingAssign.deleteGroup;
-      if (groupFilter === g) groupFilter = '';
+      activeFilters.delete(g);
       await post('/api/group-delete', {name: g});
       await refreshGroups();
       await refresh();
@@ -499,7 +530,13 @@ window.assignNumpad = function(slot) {
 };
 
 // --- Clear all ---
-document.getElementById('deleteAll').addEventListener('click', () => post('/api/delete-all', {}).then(refresh));
+document.getElementById('clearAll').addEventListener('click', () => {
+  document.getElementById('confirmTitle').textContent = 'Clear all unpinned items?';
+  document.getElementById('confirmMsg').textContent = 'Pinned items will be kept.';
+  document.getElementById('confirmYes').textContent = 'Clear';
+  pendingAssign = {clearAll: true};
+  document.getElementById('confirmOverlay').classList.add('show');
+});
 
 // --- Search ---
 searchEl.addEventListener('keydown', e => {
@@ -515,7 +552,9 @@ searchEl.addEventListener('keydown', e => {
     }
   }
 });
-searchEl.addEventListener('input', e => { query = e.target.value; applyFilter(); updateCount(); });
+const searchClear = document.getElementById('searchClear');
+searchEl.addEventListener('input', e => { query = e.target.value; searchClear.classList.toggle('show', !!query); applyFilter(); updateCount(); });
+searchClear.addEventListener('click', () => { searchEl.value = ''; query = ''; searchClear.classList.remove('show'); applyFilter(); updateCount(); searchEl.focus(); });
 
 // --- Regex toggle ---
 regexBtn.addEventListener('click', () => {
@@ -595,7 +634,7 @@ async function openSettings() {
     slotsEl.innerHTML += `<div class="np-slot${has?' has-content':''}" data-slot-idx="${has?nmap[n]:''}">
       <span class="np-num">${n}</span>
       <span class="np-text${has?'':' empty'}">${has ? esc(text) : 'empty'}</span>
-      ${has ? `<button class="np-remove" data-slot="${n}" title="Unassign">&times;</button>` : ''}
+      ${has ? `<button class="np-remove" data-slot="${n}" title="Unassign"><span class="mi">close</span></button>` : ''}
     </div>`;
   }
   slotsEl.querySelectorAll('.np-remove').forEach(btn => {
@@ -628,14 +667,14 @@ async function openSettings() {
     groupsEl.innerHTML += `<div class="group-slot">
       <span class="gp-name">${esc(g)}</span>
       <span class="gp-count">${count} item${count!==1?'s':''}</span>
-      <button class="gp-del" data-group="${esc(g)}" title="Delete group">&times;</button>
+      <button class="gp-del" data-group="${esc(g)}" title="Delete group"><span class="mi">close</span></button>
     </div>`;
   });
   groupsEl.querySelectorAll('.gp-del').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const g = btn.dataset.group;
-      if (groupFilter === g) groupFilter = '';
+      activeFilters.delete(g);
       await post('/api/group-delete', {name: g});
       await refreshGroups();
       await refresh();
@@ -678,6 +717,7 @@ async function refresh() {
     const data = await r.json();
     if (JSON.stringify(data) !== JSON.stringify(items)) {
       items = data;
+      renderGroupFilters();
       applyFilter();
       updateCount();
     }

@@ -7,6 +7,9 @@ import ctypes
 import ctypes.wintypes
 import io
 import hashlib
+import subprocess
+import tempfile
+import shutil
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import os
 import pyperclip
@@ -356,6 +359,46 @@ def poll_clipboard():
             pass
         time.sleep(0.4)
 
+# --- Windows known folders ---
+_cached_downloads = None
+def _downloads_dir():
+    global _cached_downloads
+    if _cached_downloads:
+        return _cached_downloads
+    try:
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort), ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_byte * 8)]
+        guid = GUID()
+        ctypes.windll.ole32.CLSIDFromString('{374DE290-123F-4565-9164-39C4925E467B}', ctypes.byref(guid))
+        path_ptr = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(path_ptr)) == 0:
+            _cached_downloads = path_ptr.value
+            ctypes.windll.ole32.CoTaskMemFree(path_ptr)
+            return _cached_downloads
+    except Exception:
+        pass
+    _cached_downloads = os.path.join(os.path.expanduser('~'), 'Downloads')
+    return _cached_downloads
+
+# --- Open in editor ---
+def _open_in_editor(idx, text):
+    fd, path = tempfile.mkstemp(suffix='.txt', prefix='clip-')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+        proc = subprocess.Popen(['notepad.exe', path])
+        proc.wait()
+        with open(path, 'r', encoding='utf-8') as f:
+            new_text = f.read()
+        if new_text != text:
+            with lock:
+                if 0 <= idx < len(history) and history[idx].get('text') == text:
+                    history[idx]['text'] = new_text
+                    save_history()
+    finally:
+        try: os.unlink(path)
+        except OSError: pass
+
 # --- HTTP server ---
 def load_html():
     with open(HTML_PATH, 'r', encoding='utf-8') as f:
@@ -395,13 +438,16 @@ class Handler(BaseHTTPRequestHandler):
             idx = body.get('index')
             with lock:
                 if isinstance(idx, int) and 0 <= idx < len(history):
-                    item = history[idx]
-                    if item.get('type') == 'image':
-                        img_path = os.path.join(IMG_DIR, item['image'])
-                        if os.path.exists(img_path):
-                            copy_image_to_clipboard(img_path)
-                    else:
-                        pyperclip.copy(item.get('text', ''))
+                    item = history[idx].copy()
+                else:
+                    item = None
+            if item:
+                if item.get('type') == 'image':
+                    img_path = os.path.join(IMG_DIR, item['image'])
+                    if os.path.exists(img_path):
+                        copy_image_to_clipboard(img_path)
+                else:
+                    pyperclip.copy(item.get('text', ''))
             self._ok()
             threading.Thread(target=_paste_sequence, daemon=True).start()
 
@@ -512,6 +558,28 @@ class Handler(BaseHTTPRequestHandler):
                     save_history()
             self._ok()
 
+        elif self.path == '/api/copy-image-path':
+            idx = body.get('index')
+            src = None
+            with lock:
+                if isinstance(idx, int) and 0 <= idx < len(history) and history[idx].get('type') == 'image':
+                    fname = history[idx]['image']
+                    src = os.path.join(IMG_DIR, fname)
+            dest = None
+            if src and os.path.exists(src):
+                dest = os.path.join(_downloads_dir(), os.path.basename(src))
+                shutil.copy2(src, dest)
+                pyperclip.copy(dest)
+            self._json({'path': dest})
+
+        elif self.path == '/api/open-editor':
+            idx = body.get('index')
+            with lock:
+                if isinstance(idx, int) and 0 <= idx < len(history) and history[idx].get('type') != 'image':
+                    text = history[idx].get('text', '')
+                    threading.Thread(target=_open_in_editor, args=(idx, text), daemon=True).start()
+            self._ok()
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -589,13 +657,17 @@ def _do_paste_index(index):
             item = history[index].copy()
         else:
             return
-    if item.get('type') == 'image':
-        img_path = os.path.join(IMG_DIR, item['image'])
-        if os.path.exists(img_path):
-            copy_image_to_clipboard(img_path)
-    else:
-        pyperclip.copy(item.get('text', ''))
-    _paste_sequence()
+    _poll_gate.clear()
+    try:
+        if item.get('type') == 'image':
+            img_path = os.path.join(IMG_DIR, item['image'])
+            if os.path.exists(img_path):
+                copy_image_to_clipboard(img_path)
+        else:
+            pyperclip.copy(item.get('text', ''))
+        _paste_sequence()
+    finally:
+        _poll_gate.set()
 
 def _paste_sequence():
     time.sleep(0.05)
@@ -624,6 +696,18 @@ def show_popup():
         win.move(x, y)
         win.show()
         _popup_shown = True
+        # Force focus — fake Alt keypress bypasses Windows foreground lock
+        try:
+            hwnd = _find_webview_hwnd()
+            if hwnd:
+                _u32.keybd_event(0x12, 0, 0x0002, 0)  # Alt up
+                set_foreground_window(hwnd)
+        except Exception:
+            pass
+
+def _find_webview_hwnd():
+    """Find the pywebview window handle by title."""
+    return _u32.FindWindowW(None, 'Clipboard')
 
 # --- Low-level keyboard hook ---
 WH_KEYBOARD_LL = 13
