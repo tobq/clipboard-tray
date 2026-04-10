@@ -11,11 +11,13 @@ Windows clipboard history manager that replaces the built-in Win+V. Runs as a sy
 - **Numpad quick-paste (1–9)** — assign clipboard items to numpad slots, paste from anywhere without opening the popup
 - **Pin system** — star items to prevent auto-pruning, optionally assign a numpad shortcut
 - **Custom groups** — label/tag items into groups, filter by group from the main view
-- **Built-in filters** — quick filter chips for Pinned, Numbered, and Grouped items
+- **Combinable filters** — Pinned, Numbered, Images, and custom group chips stack with AND logic
 - **Regex search** — toggle regex mode in the search bar
+- **Open in editor** — open text items in Notepad, edits saved back to history
+- **Save image to Downloads** — one-click copy image to Downloads folder with path copied to clipboard
 - **AHK-style clipboard juggling** — backup → set → Ctrl+V → restore, so your clipboard isn't overwritten by paste operations
 - **Auto-pruning** — configurable max age (days) and max storage size (GB)
-- **Settings panel** — manage numpad slots, groups, storage limits
+- **Settings panel** — manage numpad slots, groups, storage limits, clear all
 
 ## Install
 
