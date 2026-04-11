@@ -28,6 +28,26 @@
 - **macOS**: `osascript` — activates frontmost app then sends `keystroke "v" using command down`. Required because `app.dock.hide()` means our app doesn't return focus on hide.
 - **Windows**: VBScript `SendKeys "^v"` via temp file + `cscript`. Faster than PowerShell.
 
+## Windows Specifics — Low-Level Keyboard Hook
+
+**Why not `globalShortcut.register('Super+V')`?** On Windows, Windows Clipboard History (Settings → System → Clipboard) claims Win+V at the RegisterHotKey layer. Electron's globalShortcut uses RegisterHotKey internally, so registration silently fails — the return value is `false`. Same applies to Win+Numpad1-9. You cannot win this fight with the high-level API.
+
+**What we do instead.** `lib/windows-hook-worker.js` installs a `WH_KEYBOARD_LL` hook via koffi FFI on a dedicated worker thread. LL hooks sit *below* system shortcut handling, so we see (and can swallow) Win+V before Windows Clipboard History does. This matches the approach the pre-Electron Python version used with ctypes.
+
+**Worker thread, not main thread.** The hook must be installed on a thread that runs a GetMessage loop — Windows delivers LL hook calls via messages posted to the installing thread's queue. Running it on Electron's main thread works for Win+V but risks hitting `LowLevelHooksTimeout` (default 300ms) whenever JS blocks the main thread, at which point Windows silently unregisters the hook. A dedicated worker with a tight GetMessage loop avoids that entirely.
+
+**SharedArrayBuffer for state.** The worker is synchronously blocked inside `GetMessageW`, so it can't process messages from the main thread via `parentPort.on('message')`. For decisions that need real-time state (is the popup open? is slot N assigned?), main thread writes to a `SharedArrayBuffer` and the worker reads it from inside the hook callback. Layout: `[popupVisible, slot1..slot9, reserved]` as `Uint8Array`.
+
+**Numpad UX.** Plain Num1-9 (no Win) is intercepted only if:
+- The popup is open (→ assign current item to slot), OR
+- The slot is already assigned (→ paste slot contents).
+
+Otherwise the key passes through so normal numpad typing works. Main thread calls `windowsHook.setPopupVisible()` on show/hide and `windowsHook.setSlotAssignments(Set)` whenever history is saved (`syncHookState()` in main.js).
+
+**koffi over native addon.** koffi is pure JS FFI with prebuilt binaries for every Electron ABI — no `electron-rebuild`, no C++ toolchain, no breakage across Electron upgrades. The Node modules that *do* block system shortcuts all require native compilation or don't actually block Windows-reserved keys (`node-global-key-listener` explicitly can't override them).
+
+**Shutdown.** `worker.terminate()` kills the thread; Windows reclaims the hook on thread exit. A cleaner `PostThreadMessageW(WM_QUIT)` path would need the worker thread ID exposed via postMessage at startup — not worth the extra FFI surface for a quit-only code path.
+
 ## macOS Specifics
 
 - **No click-away-to-close**: `app.dock.hide()` makes blur events unreliable on macOS. Close button (×) shown in header instead. Windows uses blur-to-hide normally.
@@ -47,8 +67,9 @@
 
 ## Scripts & Process Management
 
-- **`start.sh`/`start.bat`** — kills existing, starts `npx electron .` in background
-- **`kill.sh`/`kill.bat`** — matches processes by `$SCRIPT_DIR/node_modules/electron` path to avoid killing other Electron apps
+- **`start.sh`/`start.bat`** — call kill script, verify no leftover processes, abort if kill failed, then launch `npx electron .` in background
+- **`kill.sh`/`kill.bat`** — match processes by `$SCRIPT_DIR/node_modules/electron` commandline to avoid killing other Electron apps (VS Code, Discord, etc.). Verify with a second check and force-retry if something survived
+- **`kill.bat` WMIC path matching**: WQL uses `\\` as escaped backslash in LIKE patterns. Pattern is built by `set "SCRIPT_DIR=%SCRIPT_DIR:\=\\%"` then used via delayed expansion inside the WMIC query — `wmic process where "... commandline like '%%!SCRIPT_DIR!node_modules%%'"`
 - **Single-instance lock** via `app.requestSingleInstanceLock()` — second launch shows popup instead of starting duplicate
 - **Auto-launch**: `app.setLoginItemSettings({ openAtLogin: true })` — toggled in Settings UI
 
