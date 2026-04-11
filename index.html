@@ -13,24 +13,26 @@
   ::-webkit-scrollbar { width:0; }
 
   .sticky { flex-shrink:0; background:var(--surface); padding-bottom:4px; z-index:10; position:relative; }
-  header { display:flex; align-items:center; padding:10px 14px 0; gap:6px; }
+  header { display:flex; align-items:center; padding:8px 8px 0 14px; gap:6px; }
   .count { font-size:11px; color:var(--text-dim); flex:1; }
-  .hdr-btn { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:11px; padding:4px 8px; transition:color .15s; display:flex; align-items:center; }
-  .hdr-btn:hover { color:var(--red); }
-  .hdr-btn.gear { font-size:14px; }
-  .hdr-btn.gear:hover { color:var(--accent); }
+  /* Shared icon button base — used for all small clickable icons */
+  .icon-btn { background:none; border:none; border-radius:4px; color:var(--text-dim); cursor:pointer;
+              width:24px; height:24px; display:flex; align-items:center; justify-content:center; transition:all .15s; padding:0; }
+  .icon-btn:hover { color:var(--text); background:#ffffff10; }
+  .icon-btn.accent:hover { color:var(--accent); }
+  .icon-btn.danger:hover { color:var(--red); }
+  .icon-btn .mi { font-size:16px; }
+  .close-btn { font-size:18px; font-weight:bold; font-family:system-ui; line-height:1; }
   .search-row { display:flex; align-items:stretch; margin:8px 14px 4px; background:#0a0a0a; border:1px solid #222; border-radius:4px; transition:border-color .15s; }
   .search-row:focus-within { border-color:var(--accent); }
   .search { flex:1; background:transparent; border:none; padding:7px 4px 7px 10px; color:var(--text); font-size:13px; outline:none; font-family:inherit; min-width:0; }
   .search::placeholder { color:var(--text-dim); }
   .search-btns { display:flex; align-items:center; gap:1px; padding-right:4px; }
-  .search-clear { display:none; background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:2px 4px; line-height:1; border-radius:3px; }
-  .search-clear:hover { color:var(--text); background:#ffffff10; }
-  .search-clear.show { display:block; }
-  .rx-btn { background:none; border:none; border-radius:3px; padding:2px 5px; color:var(--text-dim); cursor:pointer; font-family:'Cascadia Code',monospace; font-size:12px; transition:all .15s; }
-  .rx-btn:hover { color:var(--text); background:#ffffff10; }
+  .search-clear { display:none; }
+  .search-clear.show { display:flex; }
+  .rx-btn { font-family:'Cascadia Code',monospace; font-size:12px; }
   .rx-btn.active { color:var(--accent); background:#1a1030; }
-  .rx-btn.active:hover { background:#251545; }
+  .rx-btn.active:hover { color:var(--accent); background:#251545; }
 
   /* Group filter tags */
   .group-filters { display:flex; gap:4px; padding:2px 14px 2px; flex-wrap:wrap; }
@@ -40,9 +42,12 @@
   .filter-tag.active { background:var(--accent); color:#000; border-color:var(--accent); }
   .filter-tag.builtin { border-style:dashed; }
   .filter-tag.builtin.active { border-style:solid; }
-  .filter-tag .gtag-x { display:none; margin-left:3px; color:var(--red); font-weight:bold; }
-  .filter-tag:hover .gtag-x { display:inline; }
-  .filter-tag.active .gtag-x { color:#600; }
+  .filter-tag .gtag-x { display:none; margin-left:1px; margin-right:-3px; color:var(--text-dim); font-size:10px; vertical-align:middle;
+                        width:12px; height:12px; line-height:12px; text-align:center; border-radius:50%; cursor:pointer; }
+  .filter-tag:hover .gtag-x { display:inline-block; }
+  .filter-tag .gtag-x:hover { color:var(--text); background:#ffffff15; }
+  .filter-tag.active .gtag-x { color:rgba(0,0,0,.4); }
+  .filter-tag.active .gtag-x:hover { color:#000; background:rgba(0,0,0,.15); }
 
   .main-view { display:flex; flex-direction:column; flex:1; min-height:0; }
   .list { flex:1; overflow-y:auto; padding:0 0 8px; min-height:0; }
@@ -87,10 +92,6 @@
 
   .actions { display:flex; align-items:center; gap:1px; flex-shrink:0; opacity:0; transition:opacity .1s; }
   .item:hover .actions { opacity:1; }
-  .act { background:none; border:none; color:var(--text-dim); cursor:pointer; padding:3px 4px; font-size:11px; border-radius:3px; transition:all .1s; line-height:1; }
-  .act .mi { font-size:16px; }
-  .act:hover { color:var(--accent); background:#ffffff08; }
-  .act.act-del:hover { color:var(--red); }
 
   mark { background:rgba(167,139,250,.2); color:#c4b5fd; border-radius:2px; padding:0 1px; }
   .toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%) translateY(16px); background:var(--green); color:#000;
@@ -115,9 +116,7 @@
   .settings-view { display:none; flex-direction:column; height:100%; }
   .settings-view.show { display:flex; }
   .main-view.hidden { display:none; }
-  .settings-hdr { display:flex; align-items:center; padding:12px 14px; gap:10px; border-bottom:1px solid #222; }
-  .settings-hdr .back { background:none; border:none; color:var(--accent); cursor:pointer; font-size:13px; padding:4px 8px; }
-  .settings-hdr .back:hover { color:#fff; }
+  .settings-hdr { display:flex; align-items:center; padding:8px 8px 8px 8px; gap:6px; border-bottom:1px solid #222; }
   .settings-hdr h2 { font-size:14px; font-weight:500; flex:1; }
   .settings-body { flex:1; overflow-y:auto; padding:12px 14px; }
   .setting-row { display:flex; align-items:center; justify-content:space-between; padding:8px 0; }
@@ -132,38 +131,43 @@
   .np-slot .np-text.empty { font-style:italic; }
   .np-slot.has-content { cursor:pointer; }
   .np-slot.has-content:hover { background:var(--surface2); }
-  .np-slot .np-remove { background:none; border:none; color:var(--text-dim); cursor:pointer; padding:2px 4px; border-radius:3px; }
   .np-slot .np-remove .mi { font-size:14px; }
-  .np-slot .np-remove:hover { color:var(--text); background:#ffffff08; }
   .settings-usage { font-size:11px; color:var(--text-dim); margin-top:12px; }
   .settings-footer { position:sticky; bottom:0; padding:12px 0 8px; background:rgba(19,19,19,.7); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
-  .settings-footer-btns { display:flex; gap:8px; }
-  .settings-save { border:none; background:var(--green); color:#000; padding:8px 24px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; flex:1; }
-  .settings-save:hover { filter:brightness(1.1); }
-  .settings-clear { border:none; background:var(--red); color:#000; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; }
+  .settings-clear { border:none; background:var(--red); color:#000; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; width:100%; }
   .settings-clear:hover { filter:brightness(1.1); }
   .group-slot { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid #111; }
   .group-slot .gp-name { flex:1; font-size:12px; color:var(--accent); }
   .group-slot .gp-count { font-size:10px; color:var(--text-dim); }
-  .group-slot .gp-del { background:none; border:none; color:var(--text-dim); cursor:pointer; padding:2px 4px; border-radius:3px; }
   .group-slot .gp-del .mi { font-size:14px; }
-  .group-slot .gp-del:hover { color:var(--text); background:#ffffff08; }
   .add-group-btn { background:none; border:1px dashed #333; border-radius:4px; color:var(--text-dim); cursor:pointer; font-size:11px;
                    padding:6px; width:100%; margin-top:4px; transition:all .15s; }
   .add-group-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .sync-row { display:flex; align-items:center; gap:6px; padding:6px 0; }
+  .sync-select { flex:1; background:#0a0a0a; border:1px solid #222; border-radius:4px; padding:5px 8px;
+                 color:var(--text); font-size:11px; outline:none; font-family:inherit; cursor:pointer;
+                 appearance:none; -webkit-appearance:none; }
+  .sync-select:focus { border-color:var(--accent); }
+  .sync-select option { background:#0a0a0a; color:var(--text); }
+  .sync-btn { background:none; border:1px solid #333; border-radius:4px; color:var(--text-dim); cursor:pointer;
+              font-size:11px; padding:4px 8px; transition:all .15s; white-space:nowrap; flex-shrink:0; }
+  .sync-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .sync-status { font-size:10px; color:var(--text-dim); margin-top:2px; }
+  .sync-status.active { color:var(--green); }
 </style></head><body>
 
 <div class="main-view" id="mainView">
   <div class="sticky">
     <header>
       <span class="count" id="count"></span>
-      <button class="hdr-btn gear" id="settingsBtn" title="Settings"><span class="mi filled">settings</span></button>
+      <button class="icon-btn accent" id="settingsBtn" title="Settings"><span class="mi filled">settings</span></button>
+      <button class="icon-btn close-btn" id="closeBtn" title="Close (Esc)" style="display:none">&#215;</button>
     </header>
     <div class="search-row">
       <input class="search" id="search" type="text" placeholder="Search..." autocomplete="off" spellcheck="false">
       <div class="search-btns">
-        <button class="search-clear" id="searchClear" title="Clear search"><span class="mi">close</span></button>
-        <button class="rx-btn" id="regexBtn" title="Regex search">.*</button>
+        <button class="icon-btn search-clear" id="searchClear" title="Clear search"><span class="mi">close</span></button>
+        <button class="icon-btn rx-btn" id="regexBtn" title="Regex search">.*</button>
       </div>
     </div>
     <div class="group-filters" id="groupFilters"></div>
@@ -173,10 +177,12 @@
 
 <div class="settings-view" id="settingsView">
   <div class="settings-hdr">
-    <button class="back" id="settingsBack"><span class="mi">arrow_back</span> Back</button>
+    <button class="icon-btn" id="settingsBack" title="Back"><span class="mi">arrow_back</span></button>
     <h2>Settings</h2>
+    <button class="icon-btn close-btn" id="settingsCloseBtn" title="Close (Esc)" style="display:none">&#215;</button>
   </div>
   <div class="settings-body">
+    <div class="setting-row"><label>Launch on startup</label><input id="autoLaunch" type="checkbox" style="width:auto;accent-color:var(--accent)"></div>
     <div class="setting-row"><label>Max age (days)</label><input id="maxAge" type="number" min="1"></div>
     <div class="setting-row"><label>Max size (GB)</label><input id="maxSize" type="number" min="0.1" step="0.1"></div>
     <div class="settings-usage" id="usage"></div>
@@ -185,15 +191,22 @@
       <div id="numpadSlots"></div>
     </div>
     <div class="settings-section">
+      <h3>Sync</h3>
+      <div class="sync-row">
+        <select class="sync-select" id="syncAccount">
+          <option value="">Off</option>
+        </select>
+        <button class="sync-btn" id="syncNow" title="Sync now"><span class="mi" style="font-size:14px;vertical-align:middle">sync</span></button>
+      </div>
+      <div class="sync-status" id="syncStatus"></div>
+    </div>
+    <div class="settings-section">
       <h3>Groups</h3>
       <div id="groupSlots"></div>
       <button class="add-group-btn" id="addGroupBtn"><span class="mi" style="font-size:14px;vertical-align:middle">add</span> New Group</button>
     </div>
     <div class="settings-footer">
-      <div class="settings-footer-btns">
-        <button class="settings-save" id="settingsSave">Save</button>
-        <button class="settings-clear" id="clearAll">Clear All</button>
-      </div>
+      <button class="settings-clear" id="clearAll">Clear All</button>
     </div>
   </div>
 </div>
@@ -246,7 +259,6 @@ function matches(text, q) {
 function isPinned(item) { return !!item.pinned; }
 function numpadOf(item) { const p = item.pinned; return typeof p === 'number' && p >= 1 && p <= 9 ? p : null; }
 function showToast(msg) { toast.textContent = msg||'Copied'; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(()=>toast.classList.remove('show'),1200); }
-const post = (url, body) => fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
 
 // --- Numpad slot map ---
 function numpadMap() {
@@ -262,11 +274,9 @@ function renderGroupFilters() {
   const hasNumbered = items.some(it => numpadOf(it));
   const hasImages = items.some(it => it.type === 'image');
   let html = '';
-  // Built-in filters (only show if relevant items exist)
   if (hasPinned) html += `<span class="filter-tag builtin${activeFilters.has('__pinned__') ? ' active' : ''}" data-filter="__pinned__">Pinned</span>`;
   if (hasNumbered) html += `<span class="filter-tag builtin${activeFilters.has('__numbered__') ? ' active' : ''}" data-filter="__numbered__">Numbered</span>`;
   if (hasImages) html += `<span class="filter-tag builtin${activeFilters.has('__images__') ? ' active' : ''}" data-filter="__images__">Images</span>`;
-  // Group-specific filters
   html += groups.map(g =>
     `<span class="filter-tag${activeFilters.has(g) ? ' active' : ''}" data-group="${esc(g)}">${esc(g)}<span class="gtag-x mi" data-action="delete-group" data-group="${esc(g)}">close</span></span>`
   ).join('');
@@ -324,7 +334,7 @@ function buildItem(it, ri, nmap) {
   let previewHtml;
   let metaHtml;
   if (isImage) {
-    previewHtml = `<img src="/images/${esc(it.image)}" alt="image">`;
+    previewHtml = `<img src="clip-img:///${esc(it.image)}" alt="image">`;
     metaHtml = `<span>${ago(it.ts)}</span><span>${it.width||'?'}x${it.height||'?'}</span>`;
   } else {
     const text = it.text || '';
@@ -370,7 +380,7 @@ function buildItem(it, ri, nmap) {
       <div class="preview ${expanded.has(ri)?'expanded':'collapsed'}">${previewHtml}</div>
       <div class="meta">${metaHtml}</div>
     </div>
-    <div class="actions">${!isImage && ((it.text||'').length > 120 || /\n/.test(it.text||'')) ? `<button class="act" data-action="expand" data-i="${ri}" title="${expanded.has(ri)?'Collapse':'Expand'}"><span class="mi">${expanded.has(ri)?'unfold_less':'unfold_more'}</span></button>` : ''}${isImage ? `<button class="act" data-action="save-img" data-i="${ri}" title="Copy to Downloads"><span class="mi">save</span></button>` : `<button class="act" data-action="edit" data-i="${ri}" title="Open in editor"><span class="mi">open_in_new</span></button>`}<button class="act act-del" data-action="del" data-i="${ri}" title="Delete"><span class="mi">close</span></button></div>
+    <div class="actions">${!isImage && ((it.text||'').length > 120 || /\n/.test(it.text||'')) ? `<button class="icon-btn accent" data-action="expand" data-i="${ri}" title="${expanded.has(ri)?'Collapse':'Expand'}"><span class="mi">${expanded.has(ri)?'unfold_less':'unfold_more'}</span></button>` : ''}${isImage ? `<button class="icon-btn accent" data-action="save-img" data-i="${ri}" title="Copy to Downloads"><span class="mi">save</span></button>` : `<button class="icon-btn accent" data-action="edit" data-i="${ri}" title="Open in editor"><span class="mi">open_in_new</span></button>`}<button class="icon-btn danger" data-action="del" data-i="${ri}" title="Delete"><span class="mi">close</span></button></div>
   </div>`;
   return el;
 }
@@ -389,7 +399,7 @@ listEl.addEventListener('scroll', () => {
 
 // --- Event delegation ---
 document.addEventListener('click', e => {
-  // Group delete × on tag
+  // Group delete x on tag
   const gtagX = e.target.closest('[data-action="delete-group"]');
   if (gtagX) {
     e.stopPropagation();
@@ -407,7 +417,6 @@ document.addEventListener('click', e => {
     const f = ftag.dataset.filter;
     if (activeFilters.has(f)) { activeFilters.delete(f); }
     else {
-      // Pinned/Numbered are mutually exclusive
       if (f === '__pinned__') activeFilters.delete('__numbered__');
       else if (f === '__numbered__') activeFilters.delete('__pinned__');
       activeFilters.add(f);
@@ -435,13 +444,13 @@ document.addEventListener('click', e => {
     if (gpBtn.dataset.action === 'add-group') {
       const name = prompt('Group name:');
       if (name && name.trim()) {
-        post('/api/group-create', {name: name.trim()}).then(() => { refreshGroups(); refresh(); });
+        window.api.groupCreate(name.trim()).then(() => { refreshGroups(); refresh(); });
       }
     } else {
       const item = gpBtn.closest('.item');
       if (!item) return;
       const ri = +item.dataset.i;
-      post('/api/group-assign', {index: ri, group: gpBtn.dataset.group}).then(refresh);
+      window.api.groupAssign(ri, gpBtn.dataset.group).then(refresh);
     }
     return;
   }
@@ -458,25 +467,24 @@ document.addEventListener('click', e => {
   }
   // Star/pin
   const star = e.target.closest('[data-action="pin"]');
-  if (star) { e.stopPropagation(); post('/api/pin', {index:+star.dataset.i}).then(refresh); return; }
+  if (star) { e.stopPropagation(); window.api.pin(+star.dataset.i).then(refresh); return; }
   // Save image to Downloads
   const saveImg = e.target.closest('[data-action="save-img"]');
-  if (saveImg) { e.stopPropagation(); post('/api/copy-image-path', {index:+saveImg.dataset.i}).then(r=>r.json()).then(d=>{ if(d.path) showToast('Path copied'); }); return; }
+  if (saveImg) { e.stopPropagation(); window.api.copyImagePath(+saveImg.dataset.i).then(d => { if(d && d.path) showToast('Path copied'); }); return; }
   // Edit in editor
   const edit = e.target.closest('[data-action="edit"]');
-  if (edit) { e.stopPropagation(); post('/api/open-editor', {index:+edit.dataset.i}); return; }
+  if (edit) { e.stopPropagation(); window.api.openEditor(+edit.dataset.i); return; }
   // Expand
   const exp = e.target.closest('[data-action="expand"]');
   if (exp) { e.stopPropagation(); const ri=+exp.dataset.i; expanded.has(ri)?expanded.delete(ri):expanded.add(ri); applyFilter(); return; }
   // Delete
   const del = e.target.closest('[data-action="del"]');
-  if (del) { e.stopPropagation(); post('/api/delete', {index:+del.dataset.i}).then(refresh); return; }
+  if (del) { e.stopPropagation(); window.api.deleteItem(+del.dataset.i).then(refresh); return; }
   // Click item to paste
   const item = e.target.closest('.item');
   if (item) {
     const idx = +item.dataset.i;
-    if (window.pywebview) { pywebview.api.paste_and_hide(idx); }
-    else { post('/api/paste', {index:idx}); }
+    window.api.pasteAndHide(idx);
     return;
   }
 });
@@ -494,23 +502,23 @@ function tryAssignNumpad(slot, itemIdx) {
     pendingAssign = {slot, itemIdx};
     document.getElementById('confirmOverlay').classList.add('show');
   } else {
-    post('/api/numpad-assign', {index:itemIdx, slot}).then(refresh);
+    window.api.numpadAssign(itemIdx, slot).then(refresh);
   }
 }
 document.getElementById('confirmYes').addEventListener('click', async () => {
   if (pendingAssign) {
     if (pendingAssign.clearAll) {
-      await post('/api/delete-all', {});
+      await window.api.deleteAll();
       await refresh();
       openSettings();
     } else if (pendingAssign.deleteGroup) {
       const g = pendingAssign.deleteGroup;
       activeFilters.delete(g);
-      await post('/api/group-delete', {name: g});
+      await window.api.groupDelete(g);
       await refreshGroups();
       await refresh();
     } else {
-      await post('/api/numpad-assign', {index:pendingAssign.itemIdx, slot:pendingAssign.slot});
+      await window.api.numpadAssign(pendingAssign.itemIdx, pendingAssign.slot);
       await refresh();
     }
   }
@@ -522,7 +530,7 @@ document.getElementById('confirmNo').addEventListener('click', () => {
   document.getElementById('confirmOverlay').classList.remove('show');
 });
 
-// Global function called from Python keyboard hook
+// Global function called from main process for numpad assign
 window.assignNumpad = function(slot) {
   if (selectedIdx >= 0 && selectedIdx < filtered.length) {
     tryAssignNumpad(slot, filtered[selectedIdx]);
@@ -546,8 +554,7 @@ searchEl.addEventListener('keydown', e => {
     if (n in nmap) {
       e.preventDefault();
       const idx = nmap[n];
-      if (window.pywebview) { pywebview.api.paste_and_hide(idx); }
-      else { post('/api/paste', {index: idx}); }
+      window.api.pasteAndHide(idx);
       return;
     }
   }
@@ -560,7 +567,7 @@ searchClear.addEventListener('click', () => { searchEl.value = ''; query = ''; s
 regexBtn.addEventListener('click', () => {
   regexOn = !regexOn;
   regexBtn.classList.toggle('active', regexOn);
-  post('/api/settings', {regex_search: regexOn});
+  window.api.saveSettings({regex_search: regexOn});
   applyFilter();
 });
 
@@ -572,8 +579,8 @@ document.addEventListener('keydown', e => {
       pendingAssign = null;
     } else if (document.getElementById('settingsView').classList.contains('show')) {
       closeSettings();
-    } else if (window.pywebview) {
-      pywebview.api.hide_popup();
+    } else {
+      window.api.hidePopup();
     }
     return;
   }
@@ -583,8 +590,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'Enter' && selectedIdx >= 0 && selectedIdx < filtered.length) {
     e.preventDefault();
     const idx = filtered[selectedIdx];
-    if (window.pywebview) { pywebview.api.paste_and_hide(idx); }
-    else { post('/api/paste', {index:idx}); }
+    window.api.pasteAndHide(idx);
   }
 });
 
@@ -600,28 +606,68 @@ function moveSelection(dir) {
 }
 
 // --- Settings ---
+// macOS only: show close buttons (no reliable click-away on macOS)
+if (window.api.platform === 'darwin') {
+  document.getElementById('closeBtn').style.display = 'flex';
+  document.getElementById('settingsCloseBtn').style.display = 'flex';
+}
+document.getElementById('settingsCloseBtn').addEventListener('click', () => window.api.hidePopup());
+document.getElementById('closeBtn').addEventListener('click', () => window.api.hidePopup());
 document.getElementById('settingsBtn').addEventListener('click', openSettings);
 document.getElementById('settingsBack').addEventListener('click', closeSettings);
-document.getElementById('settingsSave').addEventListener('click', saveSettings);
 document.getElementById('addGroupBtn').addEventListener('click', async () => {
   const name = prompt('Group name:');
   if (name && name.trim()) {
-    await post('/api/group-create', {name: name.trim()});
+    await window.api.groupCreate(name.trim());
     await refreshGroups();
     await refresh();
     openSettings();
   }
 });
+document.getElementById('syncAccount').addEventListener('change', async (e) => {
+  await window.api.setSyncPath(e.target.value);
+  await refresh();
+  openSettings();
+});
+document.getElementById('syncNow').addEventListener('click', async () => {
+  await window.api.syncNow();
+  await refresh();
+  const syncStatus = document.getElementById('syncStatus');
+  syncStatus.textContent = 'Synced!';
+  setTimeout(() => openSettings(), 500);
+});
 
 async function openSettings() {
-  const r = await fetch('/api/settings'); const s = await r.json();
-  document.getElementById('maxAge').value = s.max_age_days;
-  document.getElementById('maxSize').value = s.max_size_gb;
+  const s = await window.api.getSettings();
+  const autoLaunchEl = document.getElementById('autoLaunch');
+  autoLaunchEl.checked = await window.api.getAutoLaunch();
+  autoLaunchEl.onchange = (e) => window.api.setAutoLaunch(e.target.checked);
+  const maxAgeEl = document.getElementById('maxAge');
+  const maxSizeEl = document.getElementById('maxSize');
+  maxAgeEl.value = s.max_age_days;
+  maxSizeEl.value = s.max_size_gb;
+  maxAgeEl.onchange = () => window.api.saveSettings({ max_age_days: parseInt(maxAgeEl.value) || 7 });
+  maxSizeEl.onchange = () => window.api.saveSettings({ max_size_gb: parseFloat(maxSizeEl.value) || 10 });
   regexOn = s.regex_search || false;
   regexBtn.classList.toggle('active', regexOn);
   const bytes = s.storage_bytes || 0;
   const mb = (bytes / 1048576).toFixed(1);
   document.getElementById('usage').textContent = `Current: ${s.item_count} items, ${mb} MB`;
+
+  // Sync account picker
+  const syncSelect = document.getElementById('syncAccount');
+  const accounts = await window.api.getCloudAccounts();
+  syncSelect.innerHTML = '<option value="">Off</option>';
+  for (const acc of accounts) {
+    const opt = document.createElement('option');
+    opt.value = acc.path;
+    opt.textContent = acc.email;
+    if (s.sync_path === acc.path) opt.selected = true;
+    syncSelect.appendChild(opt);
+  }
+  const syncStatus = document.getElementById('syncStatus');
+  syncStatus.textContent = s.sync_path ? 'Syncs on change + every 30s' : '';
+  syncStatus.className = 'sync-status' + (s.sync_path ? ' active' : '');
 
   // Numpad slots
   const slotsEl = document.getElementById('numpadSlots');
@@ -634,13 +680,13 @@ async function openSettings() {
     slotsEl.innerHTML += `<div class="np-slot${has?' has-content':''}" data-slot-idx="${has?nmap[n]:''}">
       <span class="np-num">${n}</span>
       <span class="np-text${has?'':' empty'}">${has ? esc(text) : 'empty'}</span>
-      ${has ? `<button class="np-remove" data-slot="${n}" title="Unassign"><span class="mi">close</span></button>` : ''}
+      ${has ? `<button class="icon-btn np-remove" data-slot="${n}" title="Unassign"><span class="mi">close</span></button>` : ''}
     </div>`;
   }
   slotsEl.querySelectorAll('.np-remove').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await post('/api/numpad-unassign', {slot: +btn.dataset.slot});
+      await window.api.numpadUnassign(+btn.dataset.slot);
       await refresh();
       openSettings();
     });
@@ -651,9 +697,9 @@ async function openSettings() {
       const it = items[idx];
       if (!it) return;
       if (it.type === 'image') {
-        await post('/api/paste', {index: idx});
+        await window.api.paste(idx);
       } else {
-        await post('/api/copy', {text: it.text || ''});
+        await window.api.copy(it.text || '');
       }
       showToast('Copied');
     });
@@ -667,7 +713,7 @@ async function openSettings() {
     groupsEl.innerHTML += `<div class="group-slot">
       <span class="gp-name">${esc(g)}</span>
       <span class="gp-count">${count} item${count!==1?'s':''}</span>
-      <button class="gp-del" data-group="${esc(g)}" title="Delete group"><span class="mi">close</span></button>
+      <button class="icon-btn gp-del" data-group="${esc(g)}" title="Delete group"><span class="mi">close</span></button>
     </div>`;
   });
   groupsEl.querySelectorAll('.gp-del').forEach(btn => {
@@ -675,7 +721,7 @@ async function openSettings() {
       e.stopPropagation();
       const g = btn.dataset.group;
       activeFilters.delete(g);
-      await post('/api/group-delete', {name: g});
+      await window.api.groupDelete(g);
       await refreshGroups();
       await refresh();
       openSettings();
@@ -692,19 +738,11 @@ function closeSettings() {
   searchEl.focus();
 }
 
-async function saveSettings() {
-  const age = parseInt(document.getElementById('maxAge').value) || 7;
-  const size = parseFloat(document.getElementById('maxSize').value) || 10;
-  await post('/api/settings', {max_age_days: age, max_size_gb: size});
-  closeSettings();
-  refresh();
-}
 
 // --- Groups refresh ---
 async function refreshGroups() {
   try {
-    const r = await fetch('/api/settings');
-    const s = await r.json();
+    const s = await window.api.getSettings();
     groups = s.groups || [];
     renderGroupFilters();
   } catch {}
@@ -713,8 +751,7 @@ async function refreshGroups() {
 // --- Data refresh ---
 async function refresh() {
   try {
-    const r = await fetch('/api/history');
-    const data = await r.json();
+    const data = await window.api.getHistory();
     if (JSON.stringify(data) !== JSON.stringify(items)) {
       items = data;
       renderGroupFilters();
@@ -729,17 +766,13 @@ refreshGroups();
 refresh();
 setInterval(refresh, 1000);
 
-// --- pywebview integration ---
-let shownAt = 0;
+// --- Focus/blur integration ---
 window.addEventListener('focus', () => {
-  shownAt = Date.now();
   refreshGroups();
   refresh();
   setTimeout(() => searchEl.focus(), 50);
 });
 window.addEventListener('blur', () => {
-  if (window.pywebview && Date.now() - shownAt > 400) {
-    setTimeout(() => { try { pywebview.api.hide_popup(); } catch{} }, 80);
-  }
+  // Popup auto-hides via Electron's blur handler on the BrowserWindow
 });
 </script></body></html>

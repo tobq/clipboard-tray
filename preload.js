@@ -1,0 +1,27 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('api', {
+  getHistory: () => ipcRenderer.invoke('get-history'),
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  paste: (index) => ipcRenderer.invoke('paste', index),
+  pasteAndHide: (index) => ipcRenderer.invoke('paste-and-hide', index),
+  hidePopup: () => ipcRenderer.invoke('hide-popup'),
+  copy: (text) => ipcRenderer.invoke('copy', text),
+  deleteItem: (index) => ipcRenderer.invoke('delete-item', index),
+  deleteAll: () => ipcRenderer.invoke('delete-all'),
+  pin: (index) => ipcRenderer.invoke('pin', index),
+  numpadAssign: (index, slot) => ipcRenderer.invoke('numpad-assign', index, slot),
+  numpadUnassign: (slot) => ipcRenderer.invoke('numpad-unassign', slot),
+  saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+  groupCreate: (name) => ipcRenderer.invoke('group-create', name),
+  groupDelete: (name) => ipcRenderer.invoke('group-delete', name),
+  groupAssign: (index, group) => ipcRenderer.invoke('group-assign', index, group),
+  copyImagePath: (index) => ipcRenderer.invoke('copy-image-path', index),
+  openEditor: (index) => ipcRenderer.invoke('open-editor', index),
+  platform: process.platform,
+  setSyncPath: (path) => ipcRenderer.invoke('set-sync-path', path),
+  getCloudAccounts: () => ipcRenderer.invoke('get-cloud-accounts'),
+  syncNow: () => ipcRenderer.invoke('sync-now'),
+  getAutoLaunch: () => ipcRenderer.invoke('get-auto-launch'),
+  setAutoLaunch: (enabled) => ipcRenderer.invoke('set-auto-launch', enabled),
+});

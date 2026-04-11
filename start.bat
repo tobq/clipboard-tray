@@ -2,6 +2,6 @@
 :: Kill any existing instances first
 call "%~dp0kill.bat"
 
-:: Start in background (no console window)
-start "" /B "C:\Users\Tobi\AppData\Local\Programs\Python\Python39\pythonw.exe" "%~dp0clipboard-tray.py"
+:: Start Electron in background
+start "" /B cmd /c "cd /d "%~dp0" && npx electron . > nul 2>&1"
 echo Clipboard tray started.

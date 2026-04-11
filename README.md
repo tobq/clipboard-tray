@@ -1,55 +1,58 @@
 # Clipboard Tray
 
-Windows clipboard history manager that replaces the built-in Win+V. Runs as a system tray app with a frameless popup UI.
-
-![Python 3.9](https://img.shields.io/badge/python-3.9-blue) ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
+Cross-platform clipboard history manager. Runs as a system tray app with a frameless popup UI.
 
 ## Features
 
-- **Win+V popup** — frameless, always-on-top clipboard history panel positioned at cursor
+- **Hotkey popup** — Cmd+Shift+V (Mac) / Win+V (Windows), positioned at cursor
 - **Text & image history** — captures both, with automatic deduplication
-- **Numpad quick-paste (1–9)** — assign clipboard items to numpad slots, paste from anywhere without opening the popup
+- **Numpad quick-paste (1-9)** — assign clipboard items to numpad slots, paste from anywhere
 - **Pin system** — star items to prevent auto-pruning, optionally assign a numpad shortcut
-- **Custom groups** — label/tag items into groups, filter by group from the main view
-- **Combinable filters** — Pinned, Numbered, Images, and custom group chips stack with AND logic
+- **Custom groups** — label/tag items, filter by group
+- **Google Drive sync** — merge-based sync across machines, no data loss
 - **Regex search** — toggle regex mode in the search bar
-- **Open in editor** — open text items in Notepad, edits saved back to history
-- **Save image to Downloads** — one-click copy image to Downloads folder with path copied to clipboard
-- **AHK-style clipboard juggling** — backup → set → Ctrl+V → restore, so your clipboard isn't overwritten by paste operations
-- **Auto-pruning** — configurable max age (days) and max storage size (GB)
-- **Settings panel** — manage numpad slots, groups, storage limits, clear all
+- **Open in editor** — edit text items externally, changes saved back
+- **Save image to Downloads** — one-click copy with path on clipboard
+- **Clipboard juggling** — backup/set/paste/restore so your clipboard isn't overwritten
+- **Auto-pruning** — configurable max age and storage size
+- **Launch on startup** — toggle in settings
 
 ## Install
 
-```
+```bash
+# macOS / Linux
+./install.sh
+
+# Windows
 install.bat
 ```
 
-Installs Python dependencies and creates a Windows startup shortcut so it launches on boot.
-
 ## Usage
 
-```
-start.bat          # Kill existing instances + start in background
-kill.bat           # Stop all instances
+```bash
+# macOS / Linux
+./start.sh        # Kill existing + start in background
+./kill.sh          # Stop
+
+# Windows
+start.bat
+kill.bat
 ```
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 |---|---|
-| **Win+V** | Open/toggle clipboard popup |
-| **Numpad 1–9** | Paste assigned slot (when popup closed) |
-| **Numpad 1–9** | Assign selected item to slot (when popup open) |
-| **Arrow keys** | Navigate items in popup |
+| **Cmd+Shift+V** (Mac) / **Win+V** (Win) | Toggle popup |
+| **Cmd+Numpad 1-9** / **Win+Numpad 1-9** | Quick-paste slot |
+| **1-9 in search** | Quick-paste slot (when search empty) |
+| **Arrow keys** | Navigate items |
 | **Enter** | Paste selected item |
 | **Escape** | Close popup |
-| **1–9 in search** | Quick-paste numpad slot (when search is empty) |
 
 ## Tech
 
-- **Python 3.9** + pywebview (WebView2 backend) for frameless popup
-- **Win32 ctypes** — low-level keyboard hook (WH_KEYBOARD_LL), clipboard backup/restore (full format enumeration, like AHK's ClipboardAll)
-- **pystray** — system tray icon
-- **Local HTTP server** (localhost:9123) serving the HTML UI + JSON API
-- Data stored in `clipboard-history.json`, images in `clipboard-images/`, settings in `clipboard-settings.json`
+- **Electron** — cross-platform, single-instance, tray app
+- **IPC** via contextBridge (no HTTP server)
+- **Custom protocol** (`clip-img://`) for serving clipboard images
+- Data: `clipboard-history.json`, `clipboard-images/`, `clipboard-settings.json`

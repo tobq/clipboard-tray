@@ -2,40 +2,66 @@
 
 ## Architecture
 
-- **Single-file Python app** (`clipboard-tray.py`) — HTTP server + clipboard poller + Win32 keyboard hook + pywebview popup + system tray, all in one process with threading
-- **Single-file UI** (`clipboard-ui.html`) — served by the HTTP server at `localhost:9123`, also loaded by pywebview
-- **Python 3.9** at `C:\Users\Tobi\AppData\Local\Programs\Python\Python39\pythonw.exe`
-- **pywebview** (WebView2 backend) for frameless popup window
-- **pystray** for system tray icon
+- **Electron app** — main process (`main.js`) handles clipboard polling, tray, global shortcuts, IPC, sync
+- **Preload bridge** (`preload.js`) — contextBridge exposing API to renderer
+- **Single-file UI** (`index.html`) — loaded via `loadFile`, images served via `clip-img://` custom protocol
+- **Cross-platform**: macOS + Windows. Platform differences handled inline with `process.platform` checks
 - Data: `clipboard-history.json`, `clipboard-images/`, `clipboard-settings.json`
 
 ## Key Data Model
 
 - **`pinned` field** on history items: `false` (not pinned), `true` (pinned, no numpad), or `1-9` (integer, numpad assigned)
-- **Python `True == 1` gotcha**: `bool` subclasses `int`, so `True == 1` evaluates to `True`. Must use `isinstance(p, int) and not isinstance(p, bool)` to distinguish starred-only from numpad-assigned. The `has_numpad_slot()` helper handles this.
-- **`group` field** on history items: string group name or absent. Groups list stored in `settings['groups']`.
+- In JS, `typeof true === 'boolean'` and `typeof 1 === 'number'` — no Python `True == 1` gotcha. `hasNumpadSlot()` uses `typeof item.pinned === 'number'`.
+- **`group` field** on history items: string group name or absent. Groups list stored in `settings.groups`.
+- **Content-addressed images**: filenames are md5 hash of PNG content (`{hash}.png`), naturally deduplicates.
 
-## Win32 Clipboard (ctypes)
+## Clipboard Operations
 
-- **64-bit safety is critical**: All clipboard functions (`GetClipboardData`, `GlobalSize`, `GlobalLock`, `GlobalAlloc`, `SetClipboardData`) MUST have proper `argtypes`/`restype` declarations. Without them, Python defaults to `c_int` return type which truncates 64-bit handles/pointers, causing silent data corruption (backup captures nothing, restore empties clipboard).
-- **AHK-style clipboard juggling**: `backup_clipboard()` → set content → `Ctrl+V` → `restore_clipboard()`. The `_poll_gate` threading.Event pauses the clipboard poller during this sequence to prevent interference.
-- **`OpenClipboard` can fail** — always check return value before proceeding.
+- **Polling** every 400ms via `clipboard.readImage()` / `clipboard.readText()`
+- **`addToHistory(entry, matchFn)`** — shared helper that deduplicates, preserves pinned/group metadata, and prunes
+- **`setClipboardToItem(item)`** — shared helper to write text or image to clipboard
+- **Backup/restore**: `backupClipboard()` saves text/html/rtf/image, `restoreClipboard()` writes them back. Used by numpad quick-paste.
+- **`pollGate`** flag pauses polling during paste sequences to prevent interference
+
+## Paste Simulation
+
+- **macOS**: `osascript` — activates frontmost app then sends `keystroke "v" using command down`. Required because `app.dock.hide()` means our app doesn't return focus on hide.
+- **Windows**: VBScript `SendKeys "^v"` via temp file + `cscript`. Faster than PowerShell.
+
+## macOS Specifics
+
+- **No click-away-to-close**: `app.dock.hide()` makes blur events unreliable on macOS. Close button (×) shown in header instead. Windows uses blur-to-hide normally.
+- **`app.dock.hide()`** hides dock icon — tray-only app
+- **Template tray icon**: `trayIcon.setTemplateImage(true)` for menu bar dark/light mode
+
+## Google Drive Sync
+
+- **Merge algorithm**: `mergeHistories()` unions both sides by content key (md5 of text, or image filename). On conflict, picks item with higher `metadataScore()` (numpad > pinned > unpinned, +1 for group). Tie-break by newer `ts`.
+- **`syncMerge()`** runs on startup + every 30s + debounced 500ms after local changes
+- **`insideSync` flag** prevents `saveHistory()`/`saveSettingsFile()` from re-triggering sync
+- **Only writes if changed** — compares JSON.stringify of merged vs current to skip no-op writes
+- **Images synced bidirectionally** — content-addressed filenames mean no conflicts
+- **`sync_path` not synced** — excluded from remote settings write (per-machine config)
+- **macOS**: detects accounts from `~/Library/CloudStorage/GoogleDrive-*/`
+- **Windows**: scans drive letters for `My Drive/clipboard-tray`
 
 ## Scripts & Process Management
 
-- **`start.bat`** calls `kill.bat` then starts pythonw.exe. It's both start and restart.
-- **`kill.bat`** kills both `pythonw.exe` (via taskkill) AND `python.exe` running clipboard-tray.py (via wmic). This is needed because running the script directly with `python.exe` (e.g., for debugging) creates processes that `taskkill /FI "IMAGENAME eq pythonw.exe"` won't catch.
-- **Ghost tray icons**: Force-killing pythonw.exe doesn't clean up system tray icons. They persist as ghosts until hovered over. This is a Windows limitation, not a bug.
-- **Running .bat from git bash**: Call directly as `C:/path/start.bat` — git bash can execute .bat files natively. Do NOT prefix with `cmd.exe /c`, it's unnecessary and the user dislikes it.
+- **`start.sh`/`start.bat`** — kills existing, starts `npx electron .` in background
+- **`kill.sh`/`kill.bat`** — matches processes by `$SCRIPT_DIR/node_modules/electron` path to avoid killing other Electron apps
+- **Single-instance lock** via `app.requestSingleInstanceLock()` — second launch shows popup instead of starting duplicate
+- **Auto-launch**: `app.setLoginItemSettings({ openAtLogin: true })` — toggled in Settings UI
 
 ## UI Patterns
 
-- **Actions are icon buttons on hover** (unified in `.actions` div): expand (▾/▴), edit (✎), delete (✕). Expand and edit hover accent, delete hovers red.
-- **Null-guard `it.text`** in templates — some items may have missing/undefined text field. Always use `(it.text||'')` when accessing outside the `isImage` branch.
-- **Filter tags**: Built-in filters (Pinned/Numbered/Grouped) shown as dashed-border chips, custom group filters as solid-border chips. Both rendered by `renderGroupFilters()`.
-- **Confirm dialog** is shared between numpad reassign ("Replace") and group delete ("Delete") — `confirmYes.textContent` is set dynamically based on action type.
+- **`icon-btn` base class** — all small clickable icons share 24x24 rounded style. Variants: `.accent` (purple hover), `.danger` (red hover), `.close-btn` (bold ×)
+- **Null-guard `it.text`** — always use `(it.text||'')` in templates
+- **Filter tags**: built-in (dashed border), custom groups (solid border)
+- **Confirm dialog** shared between numpad reassign, group delete, and clear all
+- **Settings auto-save** — max age/size save on input change, no Save button
+- **Dev auto-reload** — `fs.watch` on `index.html` triggers `reloadIgnoringCache()` (debounced 300ms)
 
 ## Debugging
 
-- To see Python errors, kill pythonw and run with `python.exe` instead (shows stderr).
-- **Always reproduce crashes before fixing** — don't guess at the cause and push a blind fix. Run with visible stderr, trigger the crash, read the traceback.
+- Run `npx electron .` directly (not via start.sh) to see stdout/stderr
+- Main process errors go to terminal, renderer errors to DevTools (Cmd+Option+I)
