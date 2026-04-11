@@ -5,6 +5,7 @@ call npm install
 echo.
 echo Setting up auto-start...
 :: Remove old Python startup shortcut if it exists
+del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\ClipboardTray.lnk" >nul 2>&1
 del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\clipboard-tray.lnk" >nul 2>&1
 echo.
 echo Done! Run start.bat to launch.
