@@ -112,6 +112,10 @@
   .btn-confirm:hover { filter:brightness(1.1); }
   .btn-cancel { background:#222; color:var(--text-dim); }
   .btn-cancel:hover { background:#333; color:var(--text); }
+  .prompt-input { width:100%; background:#0a0a0a; border:1px solid #222; border-radius:4px;
+                  padding:7px 10px; color:var(--text); font-size:13px; outline:none;
+                  margin-bottom:12px; font-family:inherit; }
+  .prompt-input:focus { border-color:var(--accent); }
 
   /* Settings view */
   .settings-view { display:none; flex-direction:column; height:100%; }
@@ -224,6 +228,17 @@
   </div>
 </div>
 
+<div class="overlay" id="promptOverlay">
+  <div class="dialog">
+    <h3 id="promptTitle"></h3>
+    <input class="prompt-input" id="promptInput" type="text" autocomplete="off" spellcheck="false">
+    <div class="dialog-btns">
+      <button class="btn-cancel" id="promptNo">Cancel</button>
+      <button class="btn-confirm" id="promptYes">OK</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast">Copied</div>
 
 <script>
@@ -258,8 +273,12 @@ function matches(text, q) {
     return regexOn ? new RegExp(q, 'i').test(text) : text.toLowerCase().includes(q.toLowerCase());
   } catch { return false; }
 }
-function isPinned(item) { return !!item.pinned; }
-function numpadOf(item) { const p = item.pinned; return typeof p === 'number' && p >= 1 && p <= 9 ? p : null; }
+// --- Pin model helpers (mirrors main.js) ---
+// item.pin: null/undefined = unpinned. Object = pinned. Shape: { number?: 1-9, groups?: string[] }
+function isPinned(item) { return item.pin != null; }
+function numpadOf(item) { return item.pin && typeof item.pin.number === 'number' ? item.pin.number : null; }
+function groupsOf(item) { return item.pin && Array.isArray(item.pin.groups) ? item.pin.groups : []; }
+function isInGroup(item, g) { return groupsOf(item).includes(g); }
 function showToast(msg) { toast.textContent = msg||'Copied'; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(()=>toast.classList.remove('show'),1200); }
 
 // --- Numpad slot map ---
@@ -272,8 +291,8 @@ function numpadMap() {
 // --- Group filter tags ---
 function renderGroupFilters() {
   const el = document.getElementById('groupFilters');
-  const hasPinned = items.some(it => it.pinned);
-  const hasNumbered = items.some(it => numpadOf(it));
+  const hasPinned = items.some(it => isPinned(it));
+  const hasNumbered = items.some(it => numpadOf(it) != null);
   const hasImages = items.some(it => it.type === 'image');
   let html = '';
   if (hasPinned) html += `<span class="filter-tag builtin${activeFilters.has('__pinned__') ? ' active' : ''}" data-filter="__pinned__">Pinned</span>`;
@@ -289,10 +308,10 @@ function renderGroupFilters() {
 function matchesFilter(it) {
   if (!activeFilters.size) return true;
   for (const f of activeFilters) {
-    if (f === '__pinned__' && !it.pinned) return false;
+    if (f === '__pinned__' && !isPinned(it)) return false;
     else if (f === '__numbered__' && numpadOf(it) === null) return false;
     else if (f === '__images__' && it.type !== 'image') return false;
-    else if (!f.startsWith('__') && it.group !== f) return false;
+    else if (!f.startsWith('__') && !isInGroup(it, f)) return false;
   }
   return true;
 }
@@ -346,7 +365,9 @@ function buildItem(it, ri, nmap) {
     metaHtml = `<span>${ago(it.ts)}</span><span>${text.length.toLocaleString()} chars</span>`;
   }
   if (pinned) metaHtml += `<span style="color:var(--pin)">pinned</span>`;
-  if (it.group) metaHtml += `<span style="color:var(--accent)">${esc(it.group)}</span>`;
+  for (const g of groupsOf(it)) {
+    metaHtml += `<span style="color:var(--accent)">${esc(g)}</span>`;
+  }
 
   // Build numpad picker buttons
   let npBtns = '';
@@ -360,11 +381,11 @@ function buildItem(it, ri, nmap) {
     npBtns += `<span class="np-btn ${cls}" data-n="${n}" title="${esc(String(title))}">${n}</span>`;
   }
 
-  // Build group picker buttons
+  // Build group picker buttons — items can belong to multiple groups
   let gpBtns = '';
-  const itemGroup = it.group || null;
+  const itemGroups = new Set(groupsOf(it));
   groups.forEach(g => {
-    const cls = itemGroup === g ? 'assigned' : 'available';
+    const cls = itemGroups.has(g) ? 'assigned' : 'available';
     gpBtns += `<span class="gp-btn ${cls}" data-group="${esc(g)}">${esc(g)}</span>`;
   });
   gpBtns += `<span class="gp-btn add-group" data-action="add-group" title="New group"><span class="mi" style="font-size:14px">add</span></span>`;
@@ -382,7 +403,7 @@ function buildItem(it, ri, nmap) {
       <div class="preview ${expanded.has(ri)?'expanded':'collapsed'}">${previewHtml}</div>
       <div class="meta">${metaHtml}</div>
     </div>
-    <div class="actions">${!isImage && ((it.text||'').length > 120 || /\n/.test(it.text||'')) ? `<button class="icon-btn accent" data-action="expand" data-i="${ri}" title="${expanded.has(ri)?'Collapse':'Expand'}"><span class="mi">${expanded.has(ri)?'unfold_less':'unfold_more'}</span></button>` : ''}${isImage ? `<button class="icon-btn accent" data-action="save-img" data-i="${ri}" title="Copy to Downloads"><span class="mi">save</span></button>` : `<button class="icon-btn accent" data-action="edit" data-i="${ri}" title="Open in editor"><span class="mi">open_in_new</span></button>`}<button class="icon-btn danger" data-action="del" data-i="${ri}" title="Delete"><span class="mi">close</span></button></div>
+    <div class="actions">${!isImage && ((it.text||'').length > 120 || /\n/.test(it.text||'')) ? `<button class="icon-btn accent" data-action="expand" data-i="${ri}" title="${expanded.has(ri)?'Collapse':'Expand'}"><span class="mi">${expanded.has(ri)?'unfold_less':'unfold_more'}</span></button>` : ''}${isImage ? `<button class="icon-btn accent" data-action="open-img" data-i="${ri}" title="Open image"><span class="mi">open_in_new</span></button><button class="icon-btn accent" data-action="save-img" data-i="${ri}" title="Copy to Downloads"><span class="mi">save</span></button>` : `<button class="icon-btn accent" data-action="edit" data-i="${ri}" title="Open in editor"><span class="mi">open_in_new</span></button>`}<button class="icon-btn danger" data-action="del" data-i="${ri}" title="Delete"><span class="mi">close</span></button></div>
   </div>`;
   return el;
 }
@@ -400,7 +421,7 @@ listEl.addEventListener('scroll', () => {
 });
 
 // --- Event delegation ---
-document.addEventListener('click', e => {
+document.addEventListener('click', async (e) => {
   // Group delete x on tag
   const gtagX = e.target.closest('[data-action="delete-group"]');
   if (gtagX) {
@@ -444,9 +465,11 @@ document.addEventListener('click', e => {
   if (gpBtn) {
     e.stopPropagation();
     if (gpBtn.dataset.action === 'add-group') {
-      const name = prompt('Group name:');
-      if (name && name.trim()) {
-        window.api.groupCreate(name.trim()).then(() => { refreshGroups(); refresh(); });
+      const name = await promptDialog('New group name');
+      if (name) {
+        await window.api.groupCreate(name);
+        await refreshGroups();
+        await refresh();
       }
     } else {
       const item = gpBtn.closest('.item');
@@ -470,6 +493,9 @@ document.addEventListener('click', e => {
   // Star/pin
   const star = e.target.closest('[data-action="pin"]');
   if (star) { e.stopPropagation(); window.api.pin(+star.dataset.i).then(refresh); return; }
+  // Open image in default viewer
+  const openImg = e.target.closest('[data-action="open-img"]');
+  if (openImg) { e.stopPropagation(); window.api.openImage(+openImg.dataset.i); return; }
   // Save image to Downloads
   const saveImg = e.target.closest('[data-action="save-img"]');
   if (saveImg) { e.stopPropagation(); window.api.copyImagePath(+saveImg.dataset.i).then(d => { if(d && d.path) showToast('Path copied'); }); return; }
@@ -490,6 +516,36 @@ document.addEventListener('click', e => {
     return;
   }
 });
+
+// --- Prompt dialog (Electron disables window.prompt) ---
+function promptDialog(title) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('promptOverlay');
+    const input = document.getElementById('promptInput');
+    const yes = document.getElementById('promptYes');
+    const no = document.getElementById('promptNo');
+    document.getElementById('promptTitle').textContent = title;
+    input.value = '';
+    overlay.classList.add('show');
+    setTimeout(() => input.focus(), 0);
+
+    const cleanup = () => {
+      overlay.classList.remove('show');
+      yes.removeEventListener('click', onYes);
+      no.removeEventListener('click', onNo);
+      document.removeEventListener('keydown', onKey, true);
+    };
+    const onYes = () => { const v = input.value.trim(); cleanup(); resolve(v || null); };
+    const onNo = () => { cleanup(); resolve(null); };
+    const onKey = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onYes(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onNo(); }
+    };
+    yes.addEventListener('click', onYes);
+    no.addEventListener('click', onNo);
+    document.addEventListener('keydown', onKey, true); // capture phase: beats global nav handler
+  });
+}
 
 // --- Numpad assign with confirm ---
 let pendingAssign = null;
@@ -618,9 +674,9 @@ document.getElementById('closeBtn').addEventListener('click', () => window.api.h
 document.getElementById('settingsBtn').addEventListener('click', openSettings);
 document.getElementById('settingsBack').addEventListener('click', closeSettings);
 document.getElementById('addGroupBtn').addEventListener('click', async () => {
-  const name = prompt('Group name:');
-  if (name && name.trim()) {
-    await window.api.groupCreate(name.trim());
+  const name = await promptDialog('New group name');
+  if (name) {
+    await window.api.groupCreate(name);
     await refreshGroups();
     await refresh();
     openSettings();
@@ -711,7 +767,7 @@ async function openSettings() {
   const groupsEl = document.getElementById('groupSlots');
   groupsEl.innerHTML = '';
   groups.forEach(g => {
-    const count = items.filter(it => it.group === g).length;
+    const count = items.filter(it => isInGroup(it, g)).length;
     groupsEl.innerHTML += `<div class="group-slot">
       <span class="gp-name">${esc(g)}</span>
       <span class="gp-count">${count} item${count!==1?'s':''}</span>

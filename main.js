@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Tray, Menu, globalShortcut, clipboard, nativeImage,
-        ipcMain, protocol, screen } = require('electron');
+        ipcMain, protocol, screen, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -75,18 +75,50 @@ function syncHookState() {
   if (!windowsHook) return;
   const assigned = new Set();
   for (const item of history) {
-    if (typeof item.pinned === 'number' && item.pinned >= 1 && item.pinned <= 9) {
-      assigned.add(item.pinned);
-    }
+    const n = numpadSlotOf(item);
+    if (n != null) assigned.add(n);
   }
   windowsHook.setSlotAssignments(assigned);
 }
 
 let history = loadHistory();
+for (const h of history) migrateItemPin(h);
 
-// --- Helpers ---
-function hasNumpadSlot(item, n) {
-  return typeof item.pinned === 'number' && item.pinned === n;
+// --- Pin model ---
+// Unified state: item.pin is null/undefined for unpinned items, or an object
+// { number?: 1-9, groups?: string[] } for pinned items. Presence of the pin
+// object = "starred" (eligible for retention). Replaces the old tangled
+// model of `item.pinned: false|true|1-9` + `item.group: string`.
+function migrateItemPin(h) {
+  if ('pin' in h) return; // already new format
+  const pin = {};
+  let pinned = false;
+  if (typeof h.pinned === 'number') {
+    pin.number = h.pinned;
+    pinned = true;
+  } else if (h.pinned === true) {
+    pinned = true;
+  }
+  if (h.group) {
+    pin.groups = [h.group];
+    pinned = true;
+  }
+  h.pin = pinned ? pin : null;
+  delete h.pinned;
+  delete h.group;
+}
+
+function isPinned(item) { return item.pin != null; }
+function numpadSlotOf(item) {
+  return item.pin && typeof item.pin.number === 'number' ? item.pin.number : null;
+}
+function groupsOf(item) {
+  return item.pin && Array.isArray(item.pin.groups) ? item.pin.groups : [];
+}
+function hasNumpadSlot(item, n) { return numpadSlotOf(item) === n; }
+function ensurePin(item) {
+  if (!item.pin) item.pin = {};
+  return item.pin;
 }
 
 function getStorageBytes() {
@@ -115,7 +147,7 @@ function pruneHistory() {
   let changed = false;
 
   for (let i = history.length - 1; i >= 0; i--) {
-    if (!history[i].pinned && (now - (history[i].ts || 0)) > maxAge) {
+    if (!isPinned(history[i]) && (now - (history[i].ts || 0)) > maxAge) {
       removeItemImage(history[i]);
       history.splice(i, 1);
       changed = true;
@@ -125,7 +157,7 @@ function pruneHistory() {
   while (getStorageBytes() > maxBytes) {
     let idx = -1;
     for (let i = history.length - 1; i >= 0; i--) {
-      if (!history[i].pinned) { idx = i; break; }
+      if (!isPinned(history[i])) { idx = i; break; }
     }
     if (idx < 0) break;
     removeItemImage(history[idx]);
@@ -136,32 +168,32 @@ function pruneHistory() {
   if (changed) saveHistory();
 }
 
-// --- Migration: old numpad_slots -> unified pinned field ---
+// --- Migration: old settings.numpad_slots -> per-item pin ---
+// Runs once on first launch after upgrading from the Python-era config.
 function migrateNumpad() {
   const oldSlots = settings.numpad_slots;
-  const hasIntPinned = history.some(h => typeof h.pinned === 'number');
 
   if (oldSlots) {
     for (const [numStr, slot] of Object.entries(oldSlots)) {
       const num = parseInt(numStr);
       if (slot.type === 'image') {
         const match = history.find(h => h.type === 'image' && h.image === slot.image);
-        if (match) match.pinned = num;
-        else history.unshift({ type: 'image', image: slot.image, ts: Date.now() / 1000, pinned: num });
+        if (match) ensurePin(match).number = num;
+        else history.unshift({ type: 'image', image: slot.image, ts: Date.now() / 1000, pin: { number: num } });
       } else {
         const text = slot.text || '';
         const match = history.find(h => h.type !== 'image' && h.text === text);
-        if (match) match.pinned = num;
-        else history.unshift({ type: 'text', text, ts: Date.now() / 1000, pinned: num });
+        if (match) ensurePin(match).number = num;
+        else history.unshift({ type: 'text', text, ts: Date.now() / 1000, pin: { number: num } });
       }
     }
     delete settings.numpad_slots;
     saveHistory();
     saveSettingsFile();
-  } else if (!hasIntPinned && !history.length) {
+  } else if (!history.length) {
     for (const num of [9, 8, 7, 6, 5, 4, 3, 2, 1]) {
       if (AHK_PRESETS[num]) {
-        history.unshift({ type: 'text', text: AHK_PRESETS[num], ts: Date.now() / 1000, pinned: num });
+        history.unshift({ type: 'text', text: AHK_PRESETS[num], ts: Date.now() / 1000, pin: { number: num } });
       }
     }
     saveHistory();
@@ -175,14 +207,18 @@ function contentKey(item) {
 }
 
 function metadataScore(item) {
-  let score = 0;
-  if (typeof item.pinned === 'number') score += 3;      // numpad slot
-  else if (item.pinned === true) score += 2;             // starred
-  if (item.group) score += 1;
+  if (!item.pin) return 0;
+  let score = 1; // base: pinned
+  if (typeof item.pin.number === 'number') score += 3;
+  if (Array.isArray(item.pin.groups)) score += item.pin.groups.length;
   return score;
 }
 
 function mergeHistories(local, remote) {
+  // Migrate remote items in place if they're still in the old format so the
+  // merge score comparison doesn't see a mix of old/new pin shapes.
+  for (const item of remote) migrateItemPin(item);
+
   const merged = new Map();
 
   for (const item of local) merged.set(contentKey(item), item);
@@ -240,7 +276,9 @@ let insideSync = false;
 function scheduleSyncMerge() {
   if (!settings.sync_path || insideSync) return;
   if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
-  syncDebounceTimer = setTimeout(() => { lastSyncMtime = 0; syncMerge(); }, 500);
+  // DO NOT reset lastSyncMtime here — that would force the merge path on
+  // every scheduled sync, breaking the local-only-wins resurrection guard.
+  syncDebounceTimer = setTimeout(syncMerge, 500);
 }
 
 function syncMerge() {
@@ -253,15 +291,37 @@ function syncMerge() {
     const remoteSettingsPath = path.join(syncPath, 'clipboard-settings.json');
     const remoteImgDir = path.join(syncPath, 'clipboard-images');
 
-    // Check if remote changed since last sync (skip if unchanged)
     let remoteMtime = 0;
     try { remoteMtime = fs.statSync(remoteDbPath).mtimeMs; } catch {}
     let localMtime = 0;
     try { localMtime = fs.statSync(DB_PATH).mtimeMs; } catch {}
-    if (Math.max(remoteMtime, localMtime) <= lastSyncMtime) return;
+    const localChangedSince = localMtime > lastSyncMtime;
+    const remoteChangedSince = remoteMtime > lastSyncMtime;
+    if (!localChangedSince && !remoteChangedSince) return;
+
+    // Local-only changes: push local to remote without merging. Prevents the
+    // resurrection bug where a deleted group comes back because the merge
+    // sees the "still has group" remote copy as higher-scored.
+    if (localChangedSince && !remoteChangedSince) {
+      try { fs.writeFileSync(remoteDbPath, JSON.stringify(history)); } catch {}
+      try {
+        const remoteSave = { ...settings };
+        delete remoteSave.numpad_slots;
+        delete remoteSave.sync_path;
+        fs.writeFileSync(remoteSettingsPath, JSON.stringify(remoteSave, null, 2));
+      } catch {}
+      syncImages(remoteImgDir);
+      try {
+        const rmt = fs.statSync(remoteDbPath).mtimeMs;
+        const lmt = fs.statSync(DB_PATH).mtimeMs;
+        lastSyncMtime = Math.max(rmt, lmt);
+      } catch {}
+      return;
+    }
+
     lastSyncMtime = Date.now();
 
-    // Load remote data
+    // Load remote data (merge path)
     let remoteHistory = [];
     try { remoteHistory = JSON.parse(fs.readFileSync(remoteDbPath, 'utf-8')); } catch {}
     let remoteSettings = {};
@@ -278,7 +338,7 @@ function syncMerge() {
     }
 
     // Merge groups from settings + any groups found on history items
-    const historyGroups = history.map(h => h.group).filter(Boolean);
+    const historyGroups = history.flatMap(h => groupsOf(h));
     const mergedGroups = mergeGroups(settings.groups, [...(remoteSettings.groups || []), ...historyGroups]);
     const groupsChanged = JSON.stringify(mergedGroups) !== JSON.stringify(settings.groups);
     if (groupsChanged) settings.groups = mergedGroups;
@@ -333,11 +393,10 @@ let pollGate = true;
 function addToHistory(entry, matchFn) {
   // Check if already at top
   if (history.length && matchFn(history[0])) return;
-  // Find existing, preserve metadata
+  // Find existing, preserve pin metadata
   const existIdx = history.findIndex(matchFn);
   if (existIdx >= 0) {
-    if (history[existIdx].pinned) entry.pinned = history[existIdx].pinned;
-    if (history[existIdx].group) entry.group = history[existIdx].group;
+    if (history[existIdx].pin) entry.pin = history[existIdx].pin;
     history.splice(existIdx, 1);
   }
   history.unshift(entry);
@@ -663,7 +722,7 @@ function setupIPC() {
   ipcMain.handle('delete-all', () => {
     const kept = [];
     for (const item of history) {
-      if (item.pinned) kept.push(item);
+      if (isPinned(item)) kept.push(item);
       else removeItemImage(item);
     }
     history.length = 0;
@@ -671,13 +730,19 @@ function setupIPC() {
     saveHistory();
   });
 
+  // Click-star behavior, matching the pre-Electron Python version:
+  //   - unpinned        → star it (pin = {})
+  //   - starred+numbered → remove the number, keep starred
+  //   - starred (any)   → fully unpin (pin = null, clears groups too)
   ipcMain.handle('pin', (_, index) => {
     if (typeof index !== 'number' || index < 0 || index >= history.length) return;
-    const p = history[index].pinned;
-    if (typeof p === 'number') {
-      history[index].pinned = true; // keep pinned, remove numpad number
+    const item = history[index];
+    if (!item.pin) {
+      item.pin = {};
+    } else if (typeof item.pin.number === 'number') {
+      delete item.pin.number;
     } else {
-      history[index].pinned = !p;
+      item.pin = null;
     }
     saveHistory();
   });
@@ -685,10 +750,11 @@ function setupIPC() {
   ipcMain.handle('numpad-assign', (_, index, slot) => {
     if (typeof index !== 'number' || typeof slot !== 'number' ||
         slot < 1 || slot > 9 || index < 0 || index >= history.length) return;
+    // Strip the slot from any other item without unpinning them.
     for (const h of history) {
-      if (hasNumpadSlot(h, slot)) h.pinned = true;
+      if (hasNumpadSlot(h, slot)) delete h.pin.number;
     }
-    history[index].pinned = slot;
+    ensurePin(history[index]).number = slot;
     saveHistory();
   });
 
@@ -696,7 +762,7 @@ function setupIPC() {
     if (typeof slot !== 'number' || slot < 1 || slot > 9) return;
     for (const h of history) {
       if (hasNumpadSlot(h, slot)) {
-        h.pinned = true;
+        delete h.pin.number;
         saveHistory();
         break;
       }
@@ -726,21 +792,29 @@ function setupIPC() {
     if (idx >= 0) {
       groups.splice(idx, 1);
       for (const h of history) {
-        if (h.group === name) delete h.group;
+        if (h.pin && h.pin.groups) {
+          h.pin.groups = h.pin.groups.filter(g => g !== name);
+          if (h.pin.groups.length === 0) delete h.pin.groups;
+        }
       }
       saveSettingsFile();
       saveHistory();
     }
   });
 
+  // Toggle membership in a group. Multi-group: an item can belong to many.
+  // Adding to any group implicitly pins the item (creates pin object).
   ipcMain.handle('group-assign', (_, index, group) => {
     if (typeof index !== 'number' || index < 0 || index >= history.length || !group) return;
     const item = history[index];
-    if (item.group === group) {
-      delete item.group;
+    const pin = ensurePin(item);
+    if (!pin.groups) pin.groups = [];
+    const gIdx = pin.groups.indexOf(group);
+    if (gIdx >= 0) {
+      pin.groups.splice(gIdx, 1);
+      if (pin.groups.length === 0) delete pin.groups;
     } else {
-      item.group = group;
-      if (!item.pinned) item.pinned = true;
+      pin.groups.push(group);
     }
     saveHistory();
   });
@@ -761,6 +835,13 @@ function setupIPC() {
     if (typeof index !== 'number' || index < 0 || index >= history.length ||
         history[index].type === 'image') return;
     openEditor(index);
+  });
+
+  ipcMain.handle('open-image', (_, index) => {
+    if (typeof index !== 'number' || index < 0 || index >= history.length ||
+        history[index].type !== 'image') return;
+    const imgPath = path.join(IMG_DIR, history[index].image);
+    if (fs.existsSync(imgPath)) shell.openPath(imgPath);
   });
 
   ipcMain.handle('set-sync-path', (_, syncPath) => {

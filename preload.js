@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
   groupAssign: (index, group) => ipcRenderer.invoke('group-assign', index, group),
   copyImagePath: (index) => ipcRenderer.invoke('copy-image-path', index),
   openEditor: (index) => ipcRenderer.invoke('open-editor', index),
+  openImage: (index) => ipcRenderer.invoke('open-image', index),
   platform: process.platform,
   setSyncPath: (path) => ipcRenderer.invoke('set-sync-path', path),
   getCloudAccounts: () => ipcRenderer.invoke('get-cloud-accounts'),
