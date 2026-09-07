@@ -753,10 +753,14 @@ Tagging is optional/archival now, not required to ship.
   40+ threads / 300+ MB), `Get-Counter '\Memory\Committed Bytes','\Memory\Commit Limit'`, and
   `Get-WinEvent -FilterHashtable @{LogName='System'; Id=2004}`. Relaunch from a tool ONLY with
   `Start-Process -FilePath <app>\start.bat -WindowStyle Hidden` (kill.bat inside it is now
-  WMI-proof). A wscript/VBS or bare electron.exe started from a tool shell runs inside that
-  session's process tree and DIED the moment the Claude Code session was torn down (14:35 on
-  2026-09-07, `console: none`, no OOM event, no app.quit); the Start-Process start.bat instance
-  before it lived 3.9 days across many session teardowns.
+  WMI-proof). **The OLD kill.bat left time bombs**: every reopen attempt the user made while WMI
+  was wedged (Start Menu -> start.bat -> kill.bat) parked a powershell inside `Get-CimInstance`;
+  when WMI finally answered, each loop `Stop-Process`ed every non-helper electron of the
+  checkout and exited - that is what killed the relaunched instances at 14:35 and 14:37 on
+  2026-09-07 (no app.quit, `console: none`). Two more were still hung (14:09, 14:10) and were
+  killed by hand. Find them WITHOUT WMI via `NtQueryInformationProcess` parent pids (a
+  powershell whose parent is cmd.exe is a kill.bat); the new kill-app.ps1 cannot leave one
+  behind (Wait-Job cap + Remove-Job -Force kills the sweep's process).
 - **Orphan-draft recovery was DEAD from the `-<seq>` filename change until 2026-09-01**: `EDIT_DRAFT_RE` only matched legacy `boardclip-edit-<12hex>-<ts>.txt`, but sessions write `...-<ts>-<seq>.txt`, so `recoverOrphanedEdits` skipped every in-flight draft (15 lingered since July, never retired). Fixed + guarded by `test/edit-draft-recovery.test.js` (reads the regex + generator out of main.js). Idle-commit had covered the gap in practice. Recovery now also SKIPS a draft whose text already sits inside a longer clip (an older prefix of a note edited after the crash) so the first restart doesn't resurrect stale duplicates - only genuinely unsaved text comes back as a new clip.
 - **Popup-open / save hot path (2026-09-02, ~10k items, 7.7MB history) - measured, don't regress:**
   the 1-2s "freeze on open" was FOUR stacked costs, none of them the file write (15ms) or
