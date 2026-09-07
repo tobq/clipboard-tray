@@ -751,10 +751,12 @@ Tagging is optional/archival now, not required to ship.
   Diagnose a stop WITHOUT WMI: `netstat -ano | findstr 45454` (the app owns UDP 45454),
   `Get-Process electron` (WMI-free; a 30 MB / 10-thread electron is an MCP helper, the app is
   40+ threads / 300+ MB), `Get-Counter '\Memory\Committed Bytes','\Memory\Commit Limit'`, and
-  `Get-WinEvent -FilterHashtable @{LogName='System'; Id=2004}`. Relaunch WITHOUT WMI when the
-  scripts predate the fix: a VBS `shell.Run """<app>\node_modules\electron\dist\electron.exe"" .", 0, False`
-  with `CurrentDirectory` = the app dir (a hidden console the app is alone on - `app.start` shows
-  `console: none`), never `Start-Process electron.exe` from a tool shell.
+  `Get-WinEvent -FilterHashtable @{LogName='System'; Id=2004}`. Relaunch from a tool ONLY with
+  `Start-Process -FilePath <app>\start.bat -WindowStyle Hidden` (kill.bat inside it is now
+  WMI-proof). A wscript/VBS or bare electron.exe started from a tool shell runs inside that
+  session's process tree and DIED the moment the Claude Code session was torn down (14:35 on
+  2026-09-07, `console: none`, no OOM event, no app.quit); the Start-Process start.bat instance
+  before it lived 3.9 days across many session teardowns.
 - **Orphan-draft recovery was DEAD from the `-<seq>` filename change until 2026-09-01**: `EDIT_DRAFT_RE` only matched legacy `boardclip-edit-<12hex>-<ts>.txt`, but sessions write `...-<ts>-<seq>.txt`, so `recoverOrphanedEdits` skipped every in-flight draft (15 lingered since July, never retired). Fixed + guarded by `test/edit-draft-recovery.test.js` (reads the regex + generator out of main.js). Idle-commit had covered the gap in practice. Recovery now also SKIPS a draft whose text already sits inside a longer clip (an older prefix of a note edited after the crash) so the first restart doesn't resurrect stale duplicates - only genuinely unsaved text comes back as a new clip.
 - **Popup-open / save hot path (2026-09-02, ~10k items, 7.7MB history) - measured, don't regress:**
   the 1-2s "freeze on open" was FOUR stacked costs, none of them the file write (15ms) or
