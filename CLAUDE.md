@@ -736,7 +736,25 @@ Tagging is optional/archival now, not required to ship.
   `app.quit`, no child event): the only remaining signature is an external `TerminateProcess`,
   e.g. another agent session running `taskkill /IM electron.exe` for its own Electron app (Forge
   is Electron too) - the global rule "never kill by image name" exists for exactly this.
-- **Relaunch under a WMI wedge**: `start.bat`/`kill.bat` use `Get-CimInstance` and hang forever when WMI is wedged (memory starvation wedges it; other tools' 2-min supervisors then pile up hung powershells). If no `\.\pipeoardclip-mcp-<user>` pipe exists and the diag heartbeat is silent, run the Startup `BoardClip.vbs` (it skips nothing but needs no WMI to launch; kill.bat inside start.bat DOES need WMI, so under a wedge use `wscript` on the VBS only after confirming no instance holds UDP 45454 via `netstat -ano`); the single-instance lock is free.
+- **Machine-wide OOM kills (2026-09-01 and 2026-09-07) + the WMI wedge that blocks a reopen**:
+  both silent stops were Windows *low virtual memory* events (System log Id 2004; 09-07: commit
+  101 of 104 GB, chrome.exe 44 GB private, vmmemWSL 3.4 GB) - the allocating process is aborted
+  with NO app.quit line, no dump, no Event 1000. The same starvation wedges winmgmt, so every
+  `Get-CimInstance` hangs, which used to hang `kill.bat` -> `start.bat` -> the Start Menu shortcut
+  and the user's reopen attempts ("randomly closed, reopen won't work"). FIX (2026-09-07):
+  main.js writes `boardclip.pid` (`{pid, startedAt, exe}`, app dir, untracked) once it holds the
+  single-instance lock and removes it on exit; `kill.bat` now runs `scripts/kill-app.ps1`, which
+  stops that pid with plain `Get-Process` (path + start-time verified, so a recycled pid is never
+  hit), then runs the old WMI sweep in a `Start-Job` capped at 8 s (skipped when winmgmt does
+  not answer). Proof: `node scripts/qa-kill-script.js` (pid-file-only kill with the sweep
+  disabled, normal kill.bat, nothing-running, other checkouts' electron count unchanged).
+  Diagnose a stop WITHOUT WMI: `netstat -ano | findstr 45454` (the app owns UDP 45454),
+  `Get-Process electron` (WMI-free; a 30 MB / 10-thread electron is an MCP helper, the app is
+  40+ threads / 300+ MB), `Get-Counter '\Memory\Committed Bytes','\Memory\Commit Limit'`, and
+  `Get-WinEvent -FilterHashtable @{LogName='System'; Id=2004}`. Relaunch WITHOUT WMI when the
+  scripts predate the fix: a VBS `shell.Run """<app>\node_modules\electron\dist\electron.exe"" .", 0, False`
+  with `CurrentDirectory` = the app dir (a hidden console the app is alone on - `app.start` shows
+  `console: none`), never `Start-Process electron.exe` from a tool shell.
 - **Orphan-draft recovery was DEAD from the `-<seq>` filename change until 2026-09-01**: `EDIT_DRAFT_RE` only matched legacy `boardclip-edit-<12hex>-<ts>.txt`, but sessions write `...-<ts>-<seq>.txt`, so `recoverOrphanedEdits` skipped every in-flight draft (15 lingered since July, never retired). Fixed + guarded by `test/edit-draft-recovery.test.js` (reads the regex + generator out of main.js). Idle-commit had covered the gap in practice. Recovery now also SKIPS a draft whose text already sits inside a longer clip (an older prefix of a note edited after the crash) so the first restart doesn't resurrect stale duplicates - only genuinely unsaved text comes back as a new clip.
 - **Popup-open / save hot path (2026-09-02, ~10k items, 7.7MB history) - measured, don't regress:**
   the 1-2s "freeze on open" was FOUR stacked costs, none of them the file write (15ms) or

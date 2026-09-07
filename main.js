@@ -6505,6 +6505,23 @@ if (!gotLock) {
   logSafe('Another instance is already running. Quitting.');
   app.quit();
 }
+// boardclip.pid lets kill.bat / kill.sh stop THIS checkout's app with plain
+// Get-Process / kill, no WMI: on 2026-09-07 a machine-wide memory crunch wedged
+// winmgmt, every Get-CimInstance hung, and with it kill.bat, start.bat and the
+// user's reopen attempts. Written only once we hold the lock (never by a second
+// instance that is about to quit), removed on exit; a stale file after an
+// external kill is harmless because the reader checks path + start time.
+const PID_FILE = path.join(SCRIPT_DIR, 'boardclip.pid');
+function writePidFile() {
+  if (app.isPackaged) return;
+  try { fs.writeFileSync(PID_FILE, JSON.stringify({ pid: process.pid, startedAt: Date.now(), exe: process.execPath })); } catch {}
+}
+function removePidFile() {
+  if (app.isPackaged) return;
+  try { const cur = blobStore.parseJsonText(fs.readFileSync(PID_FILE, 'utf8')); if (cur && cur.pid !== process.pid) return; } catch {}
+  try { fs.unlinkSync(PID_FILE); } catch {}
+}
+if (gotLock) writePidFile();
 app.on('second-instance', () => {
   // If user tries to start again, show the popup
   showPopup();
@@ -6575,6 +6592,7 @@ app.on('before-quit', () => {
 });
 process.on('exit', (code) => {
   try { diagnostics.record('app.exit', { code, reason: quitReason || 'unknown', uptime_s: Math.round(process.uptime()) }, { forceFile: true }); } catch {}
+  removePidFile();
 });
 process.on('uncaughtException', (error) => {
   try { diagnostics.record('main.uncaught_exception', { error: error && error.message, stack: error && error.stack }, { forceFile: true }); } catch {}

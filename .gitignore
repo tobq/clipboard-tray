@@ -9,6 +9,7 @@ clipboard-rtf/
 clipboard-edit-archive/
 clipboard-RECOVERED/
 boardclip-diagnostics.jsonl
+boardclip.pid
 BoardClip.vbs
 __pycache__/
 *.pyc
